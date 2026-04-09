@@ -1,0 +1,19 @@
+.env
+*.pyc
+__pycache__/
+
+# Python
+backend/.env
+backend/venv/
+
+# Flutter / Dart
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.idea/
+mobile/*.iml
+
+# OS / editor
+.DS_Store
+Thumbs.db
