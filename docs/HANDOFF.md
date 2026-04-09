@@ -1227,4 +1227,15 @@ flutter:
 - 패키지 ID (com.xxx.plowth)는 아직 미설정
 
 ---
+## 2026-04-09 Status Update
+
+- Phase 1 and the core Phase 2 flow are implemented in the current codebase.
+- Backend scope now includes auth, text-source ingest, async card generation, card CRUD, review queue/submission, and today's review summary.
+- Mobile scope now includes onboarding, guest session bootstrap, home snapshot, text capture, generation polling, review flow, and local persistence.
+- Local validation completed on 2026-04-09:
+  - `cd backend && python -m unittest test_phase2_services.py` -> 5 tests passing
+  - `cd mobile && flutter test test/local_database_repository_test.dart` -> 2 tests passing
+  - `cd mobile && flutter analyze` -> no issues found
+- Remaining roadmap focus: Phase 3 Intelligence, Phase 4 Polish & Launch, `pdf`/`link` ingest, and production hardening.
+
 END OF HANDOFF DOCUMENT

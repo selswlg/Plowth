@@ -87,3 +87,13 @@ flutter run
 
 - 1순위: 시험/자격증 준비
 - 2순위: 언어 학습
+## 2026-04-09 Update
+
+- Roadmap status: Phase 1 and Phase 2 are implemented in code. Phase 3 and Phase 4 remain.
+- Backend currently covers auth, text-source ingest, async card generation, card CRUD, review queue/submission, and today's review summary.
+- Mobile currently covers onboarding, guest session bootstrap, home snapshot, text capture, generation polling, review flow, and local persistence.
+- Local validation completed:
+  - `cd backend && python -m unittest test_phase2_services.py` -> 5 tests passing
+  - `cd mobile && flutter test test/local_database_repository_test.dart` -> 2 tests passing
+  - `cd mobile && flutter analyze` -> no issues found
+- Current gaps: `pdf` and `link` ingest, Phase 3 intelligence features, Phase 4 launch hardening, production app identity/signing.
