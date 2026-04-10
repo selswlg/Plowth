@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/database/local_database_repository.dart';
@@ -47,6 +48,7 @@ class SessionRepository {
   static const _onboardingCompleteKey = 'onboarding_complete';
   static const _accessTokenKey = 'access_token';
   static const _refreshTokenKey = 'refresh_token';
+  static final ValueNotifier<int> sessionInvalidated = ValueNotifier<int>(0);
 
   final Dio _dio;
   final LocalDatabaseRepository _localDatabaseRepository;
@@ -116,10 +118,17 @@ class SessionRepository {
   }
 
   Future<void> clearSession() async {
+    await clearStoredSession();
+  }
+
+  static Future<void> clearStoredSession({bool notify = false}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_accessTokenKey);
     await prefs.remove(_refreshTokenKey);
     await prefs.remove(_onboardingCompleteKey);
+    if (notify) {
+      sessionInvalidated.value += 1;
+    }
   }
 
   static String describeLearningGoal(String? value) {

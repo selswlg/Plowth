@@ -59,6 +59,20 @@ class _VocabularyEntry:
     meaning: str
 
 
+@dataclass(frozen=True)
+class _StructuredTextEntry:
+    concept_name: str
+    question: str
+    answer: str
+    chunk_content: str
+    domain_hint: str
+    domain_subtype: str
+    input_pattern: str
+    difficulty: int
+    tags: list[str]
+    domain_fields: dict[str, str]
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -137,6 +151,23 @@ def _keyword_candidates(text: str) -> list[str]:
     return [token for token, _ in counts.most_common(6)]
 
 
+def _is_qa_label(value: str) -> bool:
+    return value.strip().lower() in {
+        "q",
+        "q.",
+        "question",
+        "a",
+        "a.",
+        "answer",
+        "front",
+        "back",
+        "질문",
+        "문제",
+        "답",
+        "정답",
+    }
+
+
 def _parse_vocabulary_entries(text: str) -> list[_VocabularyEntry]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if len(lines) < 3:
@@ -153,6 +184,8 @@ def _parse_vocabulary_entries(text: str) -> list[_VocabularyEntry]:
         meaning = cleaned[match.end() :].strip()
         if not term or not meaning:
             continue
+        if _is_qa_label(term):
+            continue
         if len(term) > 80 or len(meaning) > 240:
             continue
 
@@ -163,6 +196,277 @@ def _parse_vocabulary_entries(text: str) -> list[_VocabularyEntry]:
         return []
 
     return entries[:MAX_CARDS]
+
+
+QA_LINE_PATTERN = re.compile(
+    r"^\s*(?P<label>q|question|질문|문제|front)\s*[:：.)]\s*(?P<value>.+)$",
+    re.IGNORECASE,
+)
+ANSWER_LINE_PATTERN = re.compile(
+    r"^\s*(?P<label>a|answer|답|정답|back)\s*[:：.)]\s*(?P<value>.+)$",
+    re.IGNORECASE,
+)
+ONE_LINE_QA_PATTERN = re.compile(
+    r"^\s*(?:q|question|질문|문제)\s*[:：.)]\s*(?P<question>.+?)\s+"
+    r"(?:a|answer|답|정답)\s*[:：.)]\s*(?P<answer>.+)$",
+    re.IGNORECASE,
+)
+
+
+def _parse_qa_entries(text: str) -> list[tuple[str, str]]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    entries: list[tuple[str, str]] = []
+    pending_question: str | None = None
+
+    for line in lines:
+        one_line = ONE_LINE_QA_PATTERN.match(line)
+        if one_line is not None:
+            entries.append(
+                (
+                    one_line.group("question").strip(),
+                    one_line.group("answer").strip(),
+                )
+            )
+            pending_question = None
+            continue
+
+        question_match = QA_LINE_PATTERN.match(line)
+        if question_match is not None:
+            pending_question = question_match.group("value").strip()
+            continue
+
+        answer_match = ANSWER_LINE_PATTERN.match(line)
+        if answer_match is not None and pending_question:
+            answer = answer_match.group("value").strip()
+            if answer:
+                entries.append((pending_question, answer))
+            pending_question = None
+
+    return [
+        (question, answer)
+        for question, answer in entries[:MAX_CARDS]
+        if 3 <= len(question) <= 1000 and 1 <= len(answer) <= 2000
+    ]
+
+
+def _split_table_line(line: str) -> list[str]:
+    stripped = line.strip().strip("|")
+    if "\t" in stripped:
+        return [part.strip() for part in stripped.split("\t")]
+    if "|" in stripped:
+        return [part.strip() for part in stripped.split("|")]
+    if re.search(r"\s{2,}", stripped):
+        return [part.strip() for part in re.split(r"\s{2,}", stripped)]
+    return []
+
+
+def _column_score(header: str, keywords: tuple[str, ...]) -> int:
+    normalized = header.strip().lower()
+    return max((1 for keyword in keywords if keyword in normalized), default=0)
+
+
+def _parse_table_entries(text: str) -> tuple[str, list[tuple[str, str]]]:
+    rows = [
+        [cell for cell in _split_table_line(line) if cell]
+        for line in text.splitlines()
+        if line.strip()
+    ]
+    rows = [row for row in rows if len(row) >= 2]
+    if len(rows) < 3:
+        return "", []
+
+    question_keywords = (
+        "question",
+        "prompt",
+        "front",
+        "term",
+        "word",
+        "vocab",
+        "단어",
+        "문제",
+        "질문",
+        "한자",
+    )
+    answer_keywords = (
+        "answer",
+        "definition",
+        "meaning",
+        "back",
+        "translation",
+        "뜻",
+        "정답",
+        "해석",
+    )
+
+    header = rows[0]
+    question_index = max(
+        range(len(header)),
+        key=lambda index: _column_score(header[index], question_keywords),
+    )
+    answer_index = max(
+        range(len(header)),
+        key=lambda index: _column_score(header[index], answer_keywords),
+    )
+    has_header = (
+        _column_score(header[question_index], question_keywords) > 0
+        and _column_score(header[answer_index], answer_keywords) > 0
+        and question_index != answer_index
+    )
+
+    data_rows = rows[1:] if has_header else rows
+    if not has_header:
+        question_index = 0
+        answer_index = 1
+
+    entries: list[tuple[str, str]] = []
+    for row in data_rows:
+        if len(row) <= max(question_index, answer_index):
+            continue
+        question = row[question_index].strip()
+        answer = row[answer_index].strip()
+        if question and answer and question != answer:
+            entries.append((question, answer))
+
+    if len(entries) < 3:
+        return "", []
+
+    pattern = "table_paste"
+    if has_header and any(
+        keyword in " ".join(header).lower()
+        for keyword in ("term", "word", "vocab", "translation", "meaning", "뜻", "단어")
+    ):
+        pattern = "language_table"
+    return pattern, entries[:MAX_CARDS]
+
+
+def _parse_memory_list_entries(text: str) -> list[str]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) < 3:
+        return []
+
+    entries: list[str] = []
+    for line in lines:
+        cleaned = VOCABULARY_BULLET_PATTERN.sub("", line).strip()
+        if cleaned == line:
+            continue
+        if 8 <= len(cleaned) <= 240:
+            entries.append(cleaned)
+
+    if len(entries) < max(3, math.ceil(len(lines) * 0.6)):
+        return []
+    return entries[:MAX_CARDS]
+
+
+def _entry_tags(question: str, answer: str) -> list[str]:
+    return _keyword_candidates(f"{question} {answer}")
+
+
+def _build_structured_text_entries(text: str) -> list[_StructuredTextEntry]:
+    qa_entries = _parse_qa_entries(text)
+    if qa_entries:
+        return [
+            _StructuredTextEntry(
+                concept_name=_truncate_words(question, 8),
+                question=question,
+                answer=answer,
+                chunk_content=f"Q: {question}\nA: {answer}",
+                domain_hint="general",
+                domain_subtype="qa",
+                input_pattern="qa_list",
+                difficulty=3,
+                tags=_entry_tags(question, answer),
+                domain_fields={"context": "Q/A paste"},
+            )
+            for question, answer in qa_entries
+        ]
+
+    table_pattern, table_entries = _parse_table_entries(text)
+    if table_entries:
+        is_language = table_pattern == "language_table"
+        return [
+            _StructuredTextEntry(
+                concept_name=question,
+                question=(
+                    f'What does "{question}" mean?'
+                    if is_language
+                    else question
+                    if question.endswith("?")
+                    else f'What should you remember about "{question}"?'
+                ),
+                answer=answer,
+                chunk_content=f"{question}: {answer}",
+                domain_hint="language" if is_language else "general",
+                domain_subtype="vocabulary" if is_language else "table",
+                input_pattern=table_pattern,
+                difficulty=2 if is_language else 3,
+                tags=_entry_tags(question, answer),
+                domain_fields=(
+                    {"translation_hint": answer}
+                    if is_language
+                    else {"context": "Table paste"}
+                ),
+            )
+            for question, answer in table_entries
+        ]
+
+    memory_entries = _parse_memory_list_entries(text)
+    is_exam_memory_list = bool(memory_entries) and any(
+        marker in text.lower()
+        for marker in ("exam", "test", "quiz", "formula", "theorem", "definition")
+    )
+    if is_exam_memory_list:
+        return [
+            _StructuredTextEntry(
+                concept_name=_truncate_words(entry, 8),
+                question=f"What should you remember from item {index + 1}?",
+                answer=entry,
+                chunk_content=entry,
+                domain_hint="exam",
+                domain_subtype="recall",
+                input_pattern="memory_list",
+                difficulty=3,
+                tags=_keyword_candidates(entry),
+                domain_fields={"memory_cue": _truncate_words(entry, 10)},
+            )
+            for index, entry in enumerate(memory_entries)
+        ]
+
+    vocabulary_entries = _parse_vocabulary_entries(text)
+    if vocabulary_entries:
+        return [
+            _StructuredTextEntry(
+                concept_name=entry.term,
+                question=f'What does "{entry.term}" mean?',
+                answer=entry.meaning,
+                chunk_content=f"{entry.term}: {entry.meaning}",
+                domain_hint="language",
+                domain_subtype="vocabulary",
+                input_pattern="vocabulary_list",
+                difficulty=2,
+                tags=_entry_tags(entry.term, entry.meaning),
+                domain_fields={"translation_hint": entry.meaning},
+            )
+            for entry in vocabulary_entries
+        ]
+
+    if memory_entries:
+        return [
+            _StructuredTextEntry(
+                concept_name=_truncate_words(entry, 8),
+                question=f"What should you remember from item {index + 1}?",
+                answer=entry,
+                chunk_content=entry,
+                domain_hint="general",
+                domain_subtype="list_item",
+                input_pattern="memory_list",
+                difficulty=3,
+                tags=_keyword_candidates(entry),
+                domain_fields={"context": "List item"},
+            )
+            for index, entry in enumerate(memory_entries)
+        ]
+
+    return []
 
 
 def build_vocabulary_card_payloads(text: str) -> list[dict]:
@@ -181,10 +485,30 @@ def build_vocabulary_card_payloads(text: str) -> list[dict]:
     ]
 
 
+def build_structured_text_card_payloads(text: str) -> list[dict]:
+    return [
+        {
+            "concept_name": entry.concept_name,
+            "card_type": "definition",
+            "question": entry.question,
+            "answer": entry.answer,
+            "difficulty": entry.difficulty,
+            "domain_hint": entry.domain_hint,
+            "domain_subtype": entry.domain_subtype,
+            "input_pattern": entry.input_pattern,
+            "tags": entry.tags,
+            "domain_fields": entry.domain_fields,
+        }
+        for entry in _build_structured_text_entries(text)
+    ]
+
+
 def infer_domain_hint(text: str) -> str:
     """Classify material into a lightweight domain without schema changes."""
-    if _parse_vocabulary_entries(text):
-        return "language"
+    structured_entries = _build_structured_text_entries(text)
+    if structured_entries:
+        domain_counts = Counter(entry.domain_hint for entry in structured_entries)
+        return domain_counts.most_common(1)[0][0]
 
     lower = text.lower()
     code_markers = (
@@ -258,8 +582,17 @@ def infer_source_title(raw_text: str) -> str:
     if not text:
         return "Captured material"
 
-    if _parse_vocabulary_entries(raw_text):
-        return "Vocabulary list"
+    structured_entries = _build_structured_text_entries(raw_text)
+    if structured_entries:
+        first_pattern = structured_entries[0].input_pattern
+        if first_pattern in {"vocabulary_list", "language_table"}:
+            return "Vocabulary list"
+        if first_pattern == "qa_list":
+            return "Q&A list"
+        if first_pattern == "table_paste":
+            return "Table paste"
+        if first_pattern == "memory_list":
+            return "Memory list"
 
     first_sentence = _split_sentences(text)[0]
     if ":" in first_sentence:
@@ -407,15 +740,19 @@ async def _cleanup_partial_generation_data(source_id: UUID) -> None:
 
 async def _generate_cards_for_source(source: Source, job: Job) -> dict:
     raw_text = _normalize_text(source)
-    vocabulary_entries = _parse_vocabulary_entries(raw_text)
+    structured_entries = _build_structured_text_entries(raw_text)
     provided_title = bool(source.title and source.title.strip())
     source_title = (
         source.title.strip() if provided_title else infer_source_title(raw_text)
     )
-    domain_hint = "language" if vocabulary_entries else infer_domain_hint(raw_text)
+    domain_hint = (
+        Counter(entry.domain_hint for entry in structured_entries).most_common(1)[0][0]
+        if structured_entries
+        else infer_domain_hint(raw_text)
+    )
     chunks = (
-        [f"{entry.term}: {entry.meaning}" for entry in vocabulary_entries]
-        if vocabulary_entries
+        [entry.chunk_content for entry in structured_entries]
+        if structured_entries
         else _chunk_text(raw_text)
     )
     if not chunks:
@@ -452,15 +789,17 @@ async def _generate_cards_for_source(source: Source, job: Job) -> dict:
             db.add(chunk)
             await db.flush()
 
-            if vocabulary_entries:
-                entry = vocabulary_entries[chunk_index]
+            structured_entry = (
+                structured_entries[chunk_index] if structured_entries else None
+            )
+            if structured_entry is not None:
                 draft = _ConceptDraft(
-                    name=entry.term,
-                    description=entry.meaning,
+                    name=structured_entry.concept_name,
+                    description=structured_entry.answer,
                     details=[],
-                    tags=_keyword_candidates(chunk_text),
+                    tags=structured_entry.tags,
                 )
-                concept_category = "vocabulary"
+                concept_category = structured_entry.input_pattern
             else:
                 draft = _build_concept_draft(chunk_text, chunk_index + 1)
                 concept_category = "generated"
@@ -476,20 +815,20 @@ async def _generate_cards_for_source(source: Source, job: Job) -> dict:
             concept_rows.append((concept, draft))
 
             domain_subtype = (
-                "vocabulary"
-                if vocabulary_entries
+                structured_entry.domain_subtype
+                if structured_entry is not None
                 else _domain_subtype(domain_hint, draft)
             )
             card_payloads = (
                 [
                     {
                         "card_type": "definition",
-                        "question": f'What does "{draft.name}" mean?',
-                        "answer": draft.description,
-                        "difficulty": 2,
+                        "question": structured_entry.question,
+                        "answer": structured_entry.answer,
+                        "difficulty": structured_entry.difficulty,
                     }
                 ]
-                if vocabulary_entries
+                if structured_entry is not None
                 else _build_cards_for_concept(draft, domain_hint=domain_hint)
             )
             for card_payload in card_payloads:
@@ -502,10 +841,8 @@ async def _generate_cards_for_source(source: Source, job: Job) -> dict:
                     "domain_subtype": domain_subtype,
                     "source_type": source.source_type,
                 }
-                if vocabulary_entries:
-                    tags["domain_fields"] = {
-                        "translation_hint": draft.description,
-                    }
+                if structured_entry is not None and structured_entry.domain_fields:
+                    tags["domain_fields"] = structured_entry.domain_fields
 
                 db.add(
                     Card(
@@ -544,7 +881,9 @@ async def _generate_cards_for_source(source: Source, job: Job) -> dict:
             "domain_hint": domain_hint,
             "generator": HEURISTIC_MODEL_NAME,
             "input_pattern": (
-                "vocabulary_list" if vocabulary_entries else "concept_notes"
+                structured_entries[0].input_pattern
+                if structured_entries
+                else "concept_notes"
             ),
             "title_strategy": existing_metadata.get("title_strategy")
             or ("provided" if provided_title else "heuristic"),

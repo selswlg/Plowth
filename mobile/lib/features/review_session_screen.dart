@@ -27,6 +27,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
   bool _isSubmitting = false;
   bool _showAnswer = false;
   String? _errorMessage;
+  GenerationJob? _activeGenerationJob;
   List<ReviewQueueItem> _queue = const [];
   List<_ReviewResult> _results = const [];
   DateTime? _cardShownAt;
@@ -50,16 +51,22 @@ class _ReviewScreenState extends State<ReviewScreen> {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
+      _activeGenerationJob = null;
       _showAnswer = false;
     });
 
     try {
       final queue = await _repository.getReviewQueue(limit: 50);
+      final activeGenerationJob =
+          queue.isEmpty
+              ? await _repository.getLatestActiveGenerationJob()
+              : null;
       if (!mounted) {
         return;
       }
       setState(() {
         _queue = queue;
+        _activeGenerationJob = activeGenerationJob;
         _results = const [];
         _currentIndex = 0;
         _cardShownAt = queue.isEmpty ? null : DateTime.now();
@@ -207,12 +214,24 @@ class _ReviewScreenState extends State<ReviewScreen> {
             else if (_queue.isEmpty)
               Expanded(
                 child: _ReviewMessage(
-                  icon: Icons.auto_stories_outlined,
-                  title: 'No cards due',
+                  icon:
+                      _activeGenerationJob == null
+                          ? Icons.auto_stories_outlined
+                          : Icons.hourglass_top_rounded,
+                  title:
+                      _activeGenerationJob == null
+                          ? 'No cards due'
+                          : 'Cards are preparing',
                   message:
-                      'Generate a review set from Capture or come back when the next cards are due.',
-                  primaryLabel: 'Open Capture',
-                  onPrimaryTap: widget.onCaptureRequested,
+                      _activeGenerationJob == null
+                          ? 'Generate a review set from Capture or come back when the next cards are due.'
+                          : 'Your latest material is still being processed. Refresh in a moment.',
+                  primaryLabel:
+                      _activeGenerationJob == null ? 'Open Capture' : 'Refresh',
+                  onPrimaryTap:
+                      _activeGenerationJob == null
+                          ? widget.onCaptureRequested
+                          : _loadQueue,
                 ),
               )
             else if (reviewComplete)

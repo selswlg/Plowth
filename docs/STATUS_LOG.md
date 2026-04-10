@@ -17,7 +17,7 @@
 **Updated:** 2026-04-11 KST
 **Branch:** `main`  
 **Workspace:** `D:\REAL`  
-**State:** Phase 0/A/B/C/D/E/F/G/H completed for the capture redesign. CSV import, link ingest, text-based PDF ingest, domain metadata generation, domain-specific card editing, concept-level priority signals, Cognitive Update preview/apply, token refresh before study API calls, vocabulary-list text capture, Review tab auto-refresh, and scheduler null-state hardening are implemented.
+**State:** Phase 0/A/B/C/D/E/F/G/H completed for the capture redesign. CSV import, link ingest, text-based PDF ingest, domain metadata generation, domain-specific card editing, concept-level priority signals, Cognitive Update preview/apply, token refresh/session reset, structured text capture, Review tab auto-refresh, Review generation-in-progress messaging, and scheduler null-state hardening are implemented.
 
 ### Scope
 
@@ -82,13 +82,16 @@
 - Added backend vocabulary-list detection for line-based `term : meaning` text input.
 - Vocabulary-list text now produces one definition card per row, with `domain_hint=language`, `domain_subtype=vocabulary`, and `input_pattern=vocabulary_list`.
 - Added regression coverage for the Chinese number vocabulary sample.
+- Expanded structured text detection for explicit Q/A paste, tabular paste, language tables, and bulleted exam-memory lists.
 - Review tab now refreshes when entered and after Capture submission, so stale empty queues do not remain behind the Refresh button.
+- Review now shows a generation-in-progress state when no cards are due yet but the latest generation job is still pending/running.
 - Review scheduler now normalizes newly created `MemoryState` `None` values before calculating the next interval.
+- Refresh-token failure now clears the local session and returns the app to onboarding instead of leaving the user stuck in an expired session.
 - Added regression coverage for first-review scheduling with uninitialized memory state values.
 
 **Validation:**
 
-- `cd backend && .\venv\Scripts\python.exe -m unittest test_phase2_services.py` -> 26 tests passing
+- `cd backend && .\venv\Scripts\python.exe -m unittest test_phase2_services.py` -> 29 tests passing
 - `cd mobile && flutter analyze` -> no issues found
 - `cd mobile && flutter test` -> 8 tests passing
 
@@ -328,7 +331,7 @@
 |---|---:|---|
 | `docker ps --filter name=plowth --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"` | Pass | `plowth_postgres` and `plowth_redis` healthy |
 | `Invoke-RestMethod http://127.0.0.1:8000/health` | Fail | Backend server was not running during first local diagnosis |
-| `cd backend && .\venv\Scripts\python.exe -m unittest test_phase2_services.py` | Pass | 26 tests passed after vocabulary-list and scheduler null-state regressions |
+| `cd backend && .\venv\Scripts\python.exe -m unittest test_phase2_services.py` | Pass | 29 tests passed after structured text and scheduler null-state regressions |
 | `cd mobile && flutter analyze` | Pass | No issues after token refresh and Capture UX changes |
 | `cd mobile && flutter test` | Pass | 8 tests passing |
 

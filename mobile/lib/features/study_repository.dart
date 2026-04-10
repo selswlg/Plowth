@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/config/api_config.dart';
+import 'auth/session_repository.dart';
 
 class StudyException implements Exception {
   const StudyException(this.message);
@@ -913,7 +914,7 @@ class StudyRepository {
   Future<String> _refreshAccessToken(SharedPreferences prefs) async {
     final refreshToken = prefs.getString(_refreshTokenKey);
     if (refreshToken == null || refreshToken.isEmpty) {
-      await _clearStoredTokens(prefs);
+      await _clearStoredTokens();
       throw const StudyException('Your session expired. Start a new session.');
     }
 
@@ -938,14 +939,13 @@ class StudyRepository {
       await prefs.setString(_refreshTokenKey, nextRefreshToken);
       return accessToken;
     } on DioException {
-      await _clearStoredTokens(prefs);
+      await _clearStoredTokens();
       throw const StudyException('Your session expired. Start a new session.');
     }
   }
 
-  Future<void> _clearStoredTokens(SharedPreferences prefs) async {
-    await prefs.remove(_accessTokenKey);
-    await prefs.remove(_refreshTokenKey);
+  Future<void> _clearStoredTokens() async {
+    await SessionRepository.clearStoredSession(notify: true);
   }
 
   bool _isJwtExpired(String token) {

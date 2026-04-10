@@ -1226,10 +1226,10 @@ flutter:
 ## 2026-04-10 Status Update
 
 - Phase 1 and the core Phase 2 flow are implemented in the current codebase, and the first Phase 3 Intelligence slice is now in progress.
-- Backend scope now includes auth, text-source ingest, vocabulary-list text capture, CSV preview/import, link ingest, text-based PDF ingest, domain-tagged card generation/edit metadata, card CRUD, review queue/submission, today's review summary, Cognitive Update preview/apply, the Insight snapshot API with learning-profile/mistake tracking, and cached Tutor endpoints for `explain` / `example` / `related`.
-- Mobile scope now includes onboarding, guest session bootstrap, access-token refresh before study API calls, home snapshot, titleless text capture, CSV file import with column mapping, URL capture, PDF upload, transient capture status feedback, Review tab auto-refresh, domain-aware review labels, domain-specific card editing from Home, Cognitive Update from the Insight tab, home generation status, review flow, local persistence, the Insight tab, and Tutor actions in the review experience.
+- Backend scope now includes auth, text-source ingest, structured text capture for vocabulary/Q&A/table/list inputs, CSV preview/import, link ingest, text-based PDF ingest, domain-tagged card generation/edit metadata, card CRUD, review queue/submission, today's review summary, Cognitive Update preview/apply, the Insight snapshot API with learning-profile/mistake tracking, and cached Tutor endpoints for `explain` / `example` / `related`.
+- Mobile scope now includes onboarding, guest session bootstrap, access-token refresh and session reset, home snapshot, titleless text capture, CSV file import with column mapping, URL capture, PDF upload, transient capture status feedback, Review tab auto-refresh and generation-in-progress messaging, domain-aware review labels, domain-specific card editing from Home, Cognitive Update from the Insight tab, home generation status, review flow, local persistence, the Insight tab, and Tutor actions in the review experience.
 - Local validation completed on 2026-04-11:
-  - `cd backend && python -m unittest test_phase2_services.py` -> 26 tests passing
+  - `cd backend && python -m unittest test_phase2_services.py` -> 29 tests passing
   - `cd mobile && flutter test` -> 8 tests passing
   - `cd mobile && flutter analyze` -> no issues found
 - Remaining roadmap focus: deeper Phase 3 Intelligence (richer mistake analytics, expanded coaching, stronger Tutor workflows), scanned PDF/OCR, Phase 4 Polish & Launch, and production hardening.

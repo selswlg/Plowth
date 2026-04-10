@@ -1510,6 +1510,8 @@ Z5. [ ] live LLM-only title/domain extraction
 
 | 날짜 | 내용 |
 |------|------|
+| 2026-04-11 | Structured text capture expanded for explicit Q/A paste, tabular paste, language tables, and bulleted exam-memory lists. |
+| 2026-04-11 | Refresh-token failure now clears local session and returns the app to onboarding; Review shows generation-in-progress when cards are still being prepared. |
 | 2026-04-11 | Review tab refreshes on entry and after Capture; scheduler now handles uninitialized MemoryState values on first review. |
 | 2026-04-11 | Text capture UX adjusted to transient preparation feedback; vocabulary-list text now creates one card per `term : meaning` row. |
 | 2026-04-10 | Phase F follow-up completed with Home card editor entry, domain-specific edit fields, and Card.tags.domain_fields persistence. |

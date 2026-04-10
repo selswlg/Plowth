@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from app.services.ai_orchestrator import CostController, ModelRouter, PromptManager
 from app.services.card_generation import (
+    build_structured_text_card_payloads,
     build_vocabulary_card_payloads,
     infer_domain_hint,
     infer_source_title,
@@ -102,6 +103,51 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(cards[-1]["answer"], "억")
         self.assertEqual(infer_domain_hint(text), "language")
         self.assertEqual(infer_source_title(text), "Vocabulary list")
+
+    def test_explicit_qa_paste_builds_direct_cards(self):
+        cards = build_structured_text_card_payloads(
+            "Q: What is ATP?\n"
+            "A: A molecule that carries usable cellular energy.\n"
+            "Q: Where does glycolysis happen?\n"
+            "A: In the cytosol."
+        )
+
+        self.assertEqual(len(cards), 2)
+        self.assertEqual(cards[0]["question"], "What is ATP?")
+        self.assertEqual(
+            cards[0]["answer"],
+            "A molecule that carries usable cellular energy.",
+        )
+        self.assertEqual(cards[0]["input_pattern"], "qa_list")
+        self.assertEqual(infer_source_title("Q: What is ATP?\nA: Energy."), "Q&A list")
+
+    def test_table_paste_uses_question_and_answer_columns(self):
+        cards = build_structured_text_card_payloads(
+            "Question\tAnswer\tDeck\n"
+            "What is osmosis?\tWater movement across a membrane\tBiology\n"
+            "What is diffusion?\tMovement down a concentration gradient\tBiology\n"
+            "What is active transport?\tEnergy-powered transport\tBiology"
+        )
+
+        self.assertEqual(len(cards), 3)
+        self.assertEqual(cards[1]["question"], "What is diffusion?")
+        self.assertEqual(
+            cards[1]["answer"],
+            "Movement down a concentration gradient",
+        )
+        self.assertEqual(cards[1]["input_pattern"], "table_paste")
+
+    def test_bulleted_memory_list_builds_recall_cards(self):
+        cards = build_structured_text_card_payloads(
+            "- Formula: area of a circle is pi r squared\n"
+            "- Definition: mitochondria produce ATP\n"
+            "- Theorem: similar triangles preserve angle equality"
+        )
+
+        self.assertEqual(len(cards), 3)
+        self.assertEqual(cards[0]["domain_hint"], "exam")
+        self.assertEqual(cards[0]["input_pattern"], "memory_list")
+        self.assertIn("item 1", cards[0]["question"])
 
 
 class ReviewSchedulerTests(unittest.TestCase):

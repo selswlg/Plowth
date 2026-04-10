@@ -32,7 +32,16 @@ class _PlowthAppState extends State<PlowthApp> {
   void initState() {
     super.initState();
     _sessionRepository = SessionRepository();
+    SessionRepository.sessionInvalidated.addListener(_handleSessionInvalidated);
     _loadLaunchState();
+  }
+
+  @override
+  void dispose() {
+    SessionRepository.sessionInvalidated.removeListener(
+      _handleSessionInvalidated,
+    );
+    super.dispose();
   }
 
   Future<void> _loadLaunchState() async {
@@ -96,6 +105,31 @@ class _PlowthAppState extends State<PlowthApp> {
           _isCreatingGuestSession = false;
         });
       }
+    }
+  }
+
+  Future<void> _handleSessionInvalidated() async {
+    try {
+      final launchState = await _sessionRepository.loadLaunchState();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _launchState = launchState;
+        _errorMessage = 'Your session expired. Start a new guest session.';
+        _isLoading = false;
+        _isCreatingGuestSession = false;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _launchState = null;
+        _errorMessage = 'Your session expired. Start a new guest session.';
+        _isLoading = false;
+        _isCreatingGuestSession = false;
+      });
     }
   }
 
