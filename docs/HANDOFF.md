@@ -67,28 +67,24 @@
 
 ## 1.4 현재 진행 상황
 
-**Phase 1 (Foundation + Onboarding): 대부분 완료**
+**Phase 1 완료, 핵심 Phase 2 완료, Phase 3 착수**
 
 ### ✅ 완료
 - FastAPI 프로젝트 세팅 + Docker Compose
-- DB 스키마 17개 테이블 ORM 모델
+- Alembic 초기 마이그레이션 + DB 스키마 17개 테이블 ORM 모델
 - Auth API (회원가입, 로그인, JWT 리프레시, 게스트 토큰, 게스트→정식 마이그레이션)
-- Source/Card/Review CRUD API
-- Flutter 프로젝트 세팅 + 프리미엄 다크 테마 디자인 시스템
-- 온보딩 플로우 (가치 제안 → 학습 목표 → 진입 방식)
-- 홈 화면 + 5탭 네비게이션
-- 동기화 전략 설계 문서
-- flutter analyze 통과 (No issues found)
+- 텍스트 source ingest + 비동기 카드 생성 + Job 폴링 API
+- Card CRUD + FSRS 기반 리뷰 큐/제출 + 오늘 리뷰 요약 API
+- Drift(SQLite) 로컬 DB 세팅 + Dio API 연동
+- Flutter 온보딩, 홈, 캡처, 카드 편집, 리뷰 세션, 로컬 지속성 구현
+- Phase 3 초기 슬라이스: Insight 스냅샷 API, 모바일 Insight 탭, cached Tutor 액션
+- 앱 식별자 정리: `plowth_app`, `com.plowth.app`, `plowth_postgres`, `plowth_redis`
 
-### ⏳ 남은 Phase 1 항목
-- Alembic DB 마이그레이션 (Docker 기동 후 실행)
-- Drift(SQLite) 로컬 DB 세팅
-- Dio API 연동
-
-### ⬜ Phase 2~4 (미착수)
-- Phase 2: Core Loop (AI 카드 생성 파이프라인, FSRS 복습, 리뷰 세션 UI)
-- Phase 3: Intelligence (AI 설명, 오답 분석, 인사이트)
-- Phase 4: Polish & Launch (동기화, 결제, 최적화)
+### ⏳ 현재 남은 포커스
+- Tutor 고도화 (초기 deterministic/cached Why/Example/Related는 구현됨)
+- Mistake analytics 확장, 히트맵/스트릭 시각화, 코칭 고도화
+- `pdf` / `link` ingest
+- Phase 4 Polish & Launch (동기화, 결제, 푸시, 성능 최적화)
 
 ---
 
@@ -1087,7 +1083,7 @@ version: "3.9"
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: real_postgres
+    container_name: plowth_postgres
     environment:
       POSTGRES_USER: real_user
       POSTGRES_PASSWORD: real_dev_password
@@ -1104,7 +1100,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: real_redis
+    container_name: plowth_redis
     ports:
       - "6379:6379"
     volumes:
@@ -1126,7 +1122,7 @@ volumes:
 
 ### mobile/pubspec.yaml
 ```yaml
-name: real_app
+name: plowth_app
 description: "AI-powered learning operating system"
 publish_to: 'none'
 version: 0.1.0
@@ -1198,7 +1194,7 @@ flutter:
 5. API 연동
 
 ## Phase 3: Intelligence (3주)
-- Tutor AI (Why/Example/Related) + ai_cache 활용
+- Tutor AI 고도화 (초기 Why/Example/Related + ai_cache slice는 구현됨)
 - Mistake Analytics Engine
 - Proactive Coaching Layer
 - Insight 탭 (기억 강도, 약점, 히트맵, 스트릭)
@@ -1222,20 +1218,20 @@ flutter:
 
 ## 주의사항
 - Flutter 3.7+ 호환성: `withOpacity` 대신 `withValues(alpha: x)` 사용 필수
-- DB 컨테이너 이름은 아직 `real_postgres` / `real_redis` (Plowth로 변경 필요)
-- pubspec.yaml의 `name: real_app`도 `plowth_app`으로 변경 필요
-- 패키지 ID (com.xxx.plowth)는 아직 미설정
+- 현재 로컬 컨테이너 이름: `plowth_postgres` / `plowth_redis`
+- 현재 Flutter 패키지명: `plowth_app`
+- 현재 모바일 패키지 ID: `com.plowth.app`
 
 ---
-## 2026-04-09 Status Update
+## 2026-04-10 Status Update
 
-- Phase 1 and the core Phase 2 flow are implemented in the current codebase.
-- Backend scope now includes auth, text-source ingest, async card generation, card CRUD, review queue/submission, and today's review summary.
-- Mobile scope now includes onboarding, guest session bootstrap, home snapshot, text capture, generation polling, review flow, and local persistence.
-- Local validation completed on 2026-04-09:
-  - `cd backend && python -m unittest test_phase2_services.py` -> 5 tests passing
-  - `cd mobile && flutter test test/local_database_repository_test.dart` -> 2 tests passing
-  - `cd mobile && flutter analyze` -> no issues found
-- Remaining roadmap focus: Phase 3 Intelligence, Phase 4 Polish & Launch, `pdf`/`link` ingest, and production hardening.
+- Phase 1 and the core Phase 2 flow are implemented in the current codebase, and the first Phase 3 Intelligence slice is now in progress.
+- Backend scope now includes auth, text-source ingest, CSV preview/import, link ingest, text-based PDF ingest, domain-tagged card generation, card CRUD, review queue/submission, today's review summary, Cognitive Update preview/apply, the Insight snapshot API with learning-profile/mistake tracking, and cached Tutor endpoints for `explain` / `example` / `related`.
+- Mobile scope now includes onboarding, guest session bootstrap, home snapshot, titleless text capture, CSV file import with column mapping, URL capture, PDF upload, domain-aware review labels, Cognitive Update from the Insight tab, home generation status, review flow, local persistence, the Insight tab, and Tutor actions in the review experience.
+- Local validation completed on 2026-04-10:
+  - `cd backend && python -m unittest test_phase2_services.py` -> 23 tests passing
+  - `cd mobile && flutter test` -> 7 tests passing
+  - `cd mobile && flutter analyze` -> no issues found after removing the stale legacy review screen
+- Remaining roadmap focus: deeper Phase 3 Intelligence (richer mistake analytics, expanded coaching, stronger Tutor workflows), scanned PDF/OCR, Phase 4 Polish & Launch, and production hardening.
 
 END OF HANDOFF DOCUMENT

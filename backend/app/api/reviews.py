@@ -14,6 +14,7 @@ from app.dependencies import get_current_user
 from app.models import Card, DailyReviewQueue, MemoryState, Review, Source, User
 from app.schemas import ReviewCreate, ReviewQueueCard, ReviewResponse, ReviewSessionSummary
 from app.services.daily_review_queue import mark_daily_queue_completed, sync_daily_review_queue
+from app.services.insight_service import track_review_intelligence_signals
 from app.services.review_scheduler import calculate_schedule
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
@@ -69,6 +70,7 @@ async def get_review_queue(
             answer=card.answer,
             card_type=card.card_type,
             difficulty=card.difficulty,
+            tags=card.tags,
             state=memory_state.state if memory_state else "new",
             next_review_at=memory_state.next_review_at if memory_state else None,
             reps=memory_state.reps if memory_state else 0,
@@ -160,6 +162,14 @@ async def submit_review(
     )
 
     await db.flush()
+    await track_review_intelligence_signals(
+        db=db,
+        user_id=current_user.id,
+        card=card,
+        rating=body.rating,
+        response_time_ms=body.response_time_ms,
+        reviewed_at=now,
+    )
     return review
 
 

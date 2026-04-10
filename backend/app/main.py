@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, cards, jobs, reviews, sources
+from app.api import auth, cards, insights, jobs, reviews, sources
 from app.config import get_settings
 from app.database import Base, engine
 from app.services.card_generation import run_card_generation_job
@@ -52,6 +52,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(sources.router, prefix="/api/v1")
 app.include_router(cards.router, prefix="/api/v1")
+app.include_router(insights.router, prefix="/api/v1")
 app.include_router(jobs.router, prefix="/api/v1")
 app.include_router(reviews.router, prefix="/api/v1")
 

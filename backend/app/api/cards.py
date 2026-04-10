@@ -4,14 +4,15 @@ Cards API: CRUD for flashcards.
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import User, Card
-from app.schemas import CardCreate, CardUpdate, CardResponse
+from app.schemas import CardCreate, CardResponse, CardUpdate, TutorResponse
+from app.services.tutor_service import ALLOWED_TUTOR_REQUEST_TYPES, get_tutor_response
 
 router = APIRouter(prefix="/cards", tags=["Cards"])
 
@@ -73,6 +74,31 @@ async def get_card(
     if not card:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found")
     return card
+
+
+@router.get("/{card_id}/tutor/{request_type}", response_model=TutorResponse)
+async def get_card_tutor_response(
+    card_id: UUID,
+    request_type: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a cached tutor response for a card."""
+    if request_type not in ALLOWED_TUTOR_REQUEST_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported tutor request type.",
+        )
+
+    response = await get_tutor_response(
+        db=db,
+        user_id=current_user.id,
+        card_id=card_id,
+        request_type=request_type,
+    )
+    if response is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found")
+    return response
 
 
 @router.patch("/{card_id}", response_model=CardResponse)

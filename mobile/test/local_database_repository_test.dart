@@ -1,8 +1,8 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:real_app/core/database/app_database.dart';
-import 'package:real_app/core/database/local_database_repository.dart';
+import 'package:plowth_app/core/database/app_database.dart';
+import 'package:plowth_app/core/database/local_database_repository.dart';
 
 void main() {
   group('LocalDatabaseRepository', () {

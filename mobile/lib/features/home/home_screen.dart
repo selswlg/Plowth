@@ -36,27 +36,65 @@ class _HomeScreenState extends State<HomeScreen> {
   void didUpdateWidget(covariant HomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.refreshSeed != widget.refreshSeed) {
-      setState(() {
-        _snapshotFuture = _loadSnapshot();
-      });
+      _refreshSnapshot();
     }
   }
 
+  void _refreshSnapshot() {
+    setState(() {
+      _snapshotFuture = _loadSnapshot();
+    });
+  }
+
   Future<_HomeSnapshot> _loadSnapshot() async {
+    int? dueCount;
+    int? completedCount;
+    double? accuracyRate;
+
     try {
       final queue = await _repository.getReviewQueue(limit: 200);
       final summary = await _repository.getTodaySummary();
-      return _HomeSnapshot(
-        dueCount: queue.length,
-        completedCount: summary.totalCards,
-        accuracyRate: summary.accuracyRate,
-      );
+      dueCount = queue.length;
+      completedCount = summary.totalCards;
+      accuracyRate = summary.accuracyRate;
     } on StudyException {
-      return const _HomeSnapshot(
-        dueCount: null,
-        completedCount: null,
-        accuracyRate: null,
-      );
+      dueCount = null;
+      completedCount = null;
+      accuracyRate = null;
+    }
+
+    final generation = await _loadGenerationSnapshot();
+    return _HomeSnapshot(
+      dueCount: dueCount,
+      completedCount: completedCount,
+      accuracyRate: accuracyRate,
+      generation: generation,
+    );
+  }
+
+  Future<_GenerationSnapshot?> _loadGenerationSnapshot() async {
+    try {
+      final job = await _repository.getLatestGenerationJob();
+      if (job == null) {
+        return null;
+      }
+
+      SourceMaterial? source;
+      if (job.sourceId != null) {
+        source = await _repository.getSource(job.sourceId!);
+      }
+      return _GenerationSnapshot(job: job, source: source);
+    } on StudyException {
+      return null;
+    }
+  }
+
+  Future<void> _retryGeneration(String jobId) async {
+    try {
+      await _repository.retryJob(jobId);
+      _refreshSnapshot();
+    } on StudyException {
+      _refreshSnapshot();
     }
   }
 
@@ -79,7 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Text('Session Ready', style: AppTypography.bodyMedium),
                   const SizedBox(height: 4),
                   Text(
-                    'Build your first review loop',
+                    'Build your next review loop',
                     style: AppTypography.displayMedium,
                   ),
                 ],
@@ -138,17 +176,26 @@ class _HomeScreenState extends State<HomeScreen> {
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
             sliver: SliverToBoxAdapter(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Next Step', style: AppTypography.titleLarge),
-                  const SizedBox(height: AppSpacing.md),
-                  const _EmptyStateCard(
-                    icon: Icons.library_books_rounded,
-                    message:
-                        'Phase 2 is live: capture source text, inspect generated cards, then move into the review loop.',
-                  ),
-                ],
+              child: FutureBuilder<_HomeSnapshot>(
+                future: _snapshotFuture,
+                builder: (context, snapshot) {
+                  final generation = snapshot.data?.generation;
+                  if (generation == null) {
+                    return const _EmptyStateCard(
+                      icon: Icons.library_books_rounded,
+                      message:
+                          'Add material to prepare cards, then start a focused review pass.',
+                    );
+                  }
+
+                  return _GenerationStatusCard(
+                    generation: generation,
+                    onRefresh: _refreshSnapshot,
+                    onStartReview: widget.onStartReview,
+                    onAddMaterial: widget.onAddMaterial,
+                    onRetry: () => _retryGeneration(generation.job.id),
+                  );
+                },
               ),
             ),
           ),
@@ -245,16 +292,178 @@ class _TodaySummaryCard extends StatelessWidget {
   }
 }
 
+class _GenerationStatusCard extends StatelessWidget {
+  const _GenerationStatusCard({
+    required this.generation,
+    required this.onRefresh,
+    required this.onStartReview,
+    required this.onAddMaterial,
+    required this.onRetry,
+  });
+
+  final _GenerationSnapshot generation;
+  final VoidCallback onRefresh;
+  final VoidCallback onStartReview;
+  final VoidCallback onAddMaterial;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final isActive = generation.isActive;
+    final isFailed = generation.isFailed;
+    final isDone = generation.isDone;
+    final title = generation.source?.title ?? 'Recent material';
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceCard,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _GenerationIcon(isActive: isActive, isFailed: isFailed),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_statusTitle, style: AppTypography.titleLarge),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(title, style: AppTypography.bodyMedium),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(_summaryText, style: AppTypography.bodyMedium),
+          const SizedBox(height: AppSpacing.lg),
+          Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.sm,
+            children: [
+              if (isDone)
+                ElevatedButton(
+                  onPressed: onStartReview,
+                  child: const Text('Start Review'),
+                ),
+              if (isFailed)
+                ElevatedButton(
+                  onPressed: onRetry,
+                  child: const Text('Try Again'),
+                ),
+              OutlinedButton(
+                onPressed: onRefresh,
+                child: const Text('Refresh'),
+              ),
+              if (!isActive)
+                OutlinedButton(
+                  onPressed: onAddMaterial,
+                  child: const Text('Add More'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String get _statusTitle {
+    if (generation.isFailed) {
+      return 'Needs another pass';
+    }
+    if (generation.isDone) {
+      return 'Cards ready';
+    }
+    return 'Preparing cards';
+  }
+
+  String get _summaryText {
+    if (generation.isFailed) {
+      return generation.job.errorMessage ??
+          generation.source?.errorMessage ??
+          'Something went wrong while preparing cards.';
+    }
+
+    final cardCount = generation.cardCount;
+    final conceptCount = generation.conceptCount;
+    if (generation.isDone && cardCount != null) {
+      final conceptLabel =
+          conceptCount == null ? '' : ' from $conceptCount concepts';
+      return '$cardCount cards prepared$conceptLabel.';
+    }
+
+    return 'You can keep studying while the material is processed.';
+  }
+}
+
+class _GenerationIcon extends StatelessWidget {
+  const _GenerationIcon({required this.isActive, required this.isFailed});
+
+  final bool isActive;
+  final bool isFailed;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isActive) {
+      return const SizedBox(
+        width: 28,
+        height: 28,
+        child: CircularProgressIndicator(strokeWidth: 2.5),
+      );
+    }
+
+    return Icon(
+      isFailed ? Icons.error_outline_rounded : Icons.check_circle_rounded,
+      color: isFailed ? AppColors.accentRed : AppColors.ratingGood,
+      size: 32,
+    );
+  }
+}
+
 class _HomeSnapshot {
   const _HomeSnapshot({
     required this.dueCount,
     required this.completedCount,
     required this.accuracyRate,
+    required this.generation,
   });
 
   final int? dueCount;
   final int? completedCount;
   final double? accuracyRate;
+  final _GenerationSnapshot? generation;
+}
+
+class _GenerationSnapshot {
+  const _GenerationSnapshot({required this.job, required this.source});
+
+  final GenerationJob job;
+  final SourceMaterial? source;
+
+  bool get isActive => job.status == 'pending' || job.status == 'running';
+  bool get isDone => job.status == 'completed' || source?.status == 'done';
+  bool get isFailed => job.status == 'failed' || source?.status == 'error';
+
+  int? get cardCount => _metadataInt('card_count');
+  int? get conceptCount => _metadataInt('concept_count');
+
+  int? _metadataInt(String key) {
+    final value = source?.metadata?[key] ?? job.resultSummary?[key];
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    return null;
+  }
 }
 
 class _SummaryMetric extends StatelessWidget {

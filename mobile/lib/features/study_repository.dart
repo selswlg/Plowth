@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -30,6 +31,72 @@ class SourceGenerationResult {
       sourceId: json['id'] as String,
       jobId: json['job_id'] as String?,
       status: json['status'] as String? ?? 'pending',
+    );
+  }
+}
+
+class CsvPreview {
+  const CsvPreview({
+    required this.columns,
+    required this.sampleRows,
+    required this.rowCount,
+  });
+
+  final List<String> columns;
+  final List<Map<String, String>> sampleRows;
+  final int rowCount;
+
+  factory CsvPreview.fromJson(Map<String, dynamic> json) {
+    return CsvPreview(
+      columns:
+          ((json['columns'] as List?) ?? const <dynamic>[])
+              .map((item) => item.toString())
+              .toList(),
+      sampleRows:
+          ((json['sample_rows'] as List?) ?? const <dynamic>[])
+              .whereType<Map>()
+              .map(
+                (row) => row.map(
+                  (key, value) => MapEntry(key.toString(), value.toString()),
+                ),
+              )
+              .toList(),
+      rowCount: json['row_count'] as int? ?? 0,
+    );
+  }
+}
+
+class CsvImportResult {
+  const CsvImportResult({
+    required this.sourceId,
+    required this.title,
+    required this.status,
+    required this.cardCount,
+    required this.skippedCount,
+    required this.rowCount,
+    required this.columns,
+  });
+
+  final String sourceId;
+  final String? title;
+  final String status;
+  final int cardCount;
+  final int skippedCount;
+  final int rowCount;
+  final List<String> columns;
+
+  factory CsvImportResult.fromJson(Map<String, dynamic> json) {
+    return CsvImportResult(
+      sourceId: json['source_id'] as String,
+      title: json['title'] as String?,
+      status: json['status'] as String? ?? 'done',
+      cardCount: json['card_count'] as int? ?? 0,
+      skippedCount: json['skipped_count'] as int? ?? 0,
+      rowCount: json['row_count'] as int? ?? 0,
+      columns:
+          ((json['columns'] as List?) ?? const <dynamic>[])
+              .map((item) => item.toString())
+              .toList(),
     );
   }
 }
@@ -101,6 +168,7 @@ class StudyCard {
     required this.answer,
     required this.difficulty,
     required this.isActive,
+    required this.tags,
   });
 
   final String id;
@@ -110,6 +178,7 @@ class StudyCard {
   final String answer;
   final int difficulty;
   final bool isActive;
+  final Map<String, dynamic>? tags;
 
   factory StudyCard.fromJson(Map<String, dynamic> json) {
     return StudyCard(
@@ -120,6 +189,7 @@ class StudyCard {
       answer: json['answer'] as String? ?? '',
       difficulty: json['difficulty'] as int? ?? 3,
       isActive: json['is_active'] as bool? ?? true,
+      tags: (json['tags'] as Map?)?.cast<String, dynamic>(),
     );
   }
 }
@@ -133,6 +203,7 @@ class ReviewQueueItem {
     required this.answer,
     required this.cardType,
     required this.difficulty,
+    required this.tags,
     required this.state,
     required this.nextReviewAt,
     required this.reps,
@@ -146,6 +217,7 @@ class ReviewQueueItem {
   final String answer;
   final String cardType;
   final int difficulty;
+  final Map<String, dynamic>? tags;
   final String state;
   final DateTime? nextReviewAt;
   final int reps;
@@ -160,6 +232,7 @@ class ReviewQueueItem {
       answer: json['answer'] as String? ?? '',
       cardType: json['card_type'] as String? ?? 'definition',
       difficulty: json['difficulty'] as int? ?? 3,
+      tags: (json['tags'] as Map?)?.cast<String, dynamic>(),
       state: json['state'] as String? ?? 'new',
       nextReviewAt:
           json['next_review_at'] == null
@@ -226,6 +299,184 @@ class TodayReviewSummary {
   }
 }
 
+class DailyInsightSnapshot {
+  const DailyInsightSnapshot({
+    required this.totalDueToday,
+    required this.completedToday,
+    required this.accuracyToday,
+    required this.streakDays,
+    required this.memoryStrength,
+  });
+
+  final int totalDueToday;
+  final int completedToday;
+  final double? accuracyToday;
+  final int streakDays;
+  final double memoryStrength;
+
+  factory DailyInsightSnapshot.fromJson(Map<String, dynamic> json) {
+    return DailyInsightSnapshot(
+      totalDueToday: json['total_due_today'] as int? ?? 0,
+      completedToday: json['completed_today'] as int? ?? 0,
+      accuracyToday: (json['accuracy_today'] as num?)?.toDouble(),
+      streakDays: json['streak_days'] as int? ?? 0,
+      memoryStrength: (json['memory_strength'] as num?)?.toDouble() ?? 0,
+    );
+  }
+}
+
+class WeakConceptInsight {
+  const WeakConceptInsight({
+    required this.conceptName,
+    required this.failureCount,
+    required this.lastFailedAt,
+  });
+
+  final String conceptName;
+  final int failureCount;
+  final DateTime? lastFailedAt;
+
+  factory WeakConceptInsight.fromJson(Map<String, dynamic> json) {
+    return WeakConceptInsight(
+      conceptName: json['concept_name'] as String? ?? 'Unknown concept',
+      failureCount: json['failure_count'] as int? ?? 0,
+      lastFailedAt:
+          json['last_failed_at'] == null
+              ? null
+              : DateTime.parse(json['last_failed_at'] as String).toLocal(),
+    );
+  }
+}
+
+class InsightSnapshot {
+  const InsightSnapshot({
+    required this.overview,
+    required this.weakConcepts,
+    required this.coachTitle,
+    required this.coachMessage,
+    required this.focusTopic,
+  });
+
+  final DailyInsightSnapshot overview;
+  final List<WeakConceptInsight> weakConcepts;
+  final String coachTitle;
+  final String coachMessage;
+  final String? focusTopic;
+
+  factory InsightSnapshot.fromJson(Map<String, dynamic> json) {
+    return InsightSnapshot(
+      overview: DailyInsightSnapshot.fromJson(
+        (json['overview'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{},
+      ),
+      weakConcepts:
+          ((json['weak_concepts'] as List?) ?? const <dynamic>[])
+              .whereType<Map<String, dynamic>>()
+              .map(WeakConceptInsight.fromJson)
+              .toList(),
+      coachTitle: json['coach_title'] as String? ?? 'Stay consistent',
+      coachMessage:
+          json['coach_message'] as String? ??
+          'Review a focused set before adding more material.',
+      focusTopic: json['focus_topic'] as String?,
+    );
+  }
+}
+
+class TutorCardResponse {
+  const TutorCardResponse({
+    required this.cardId,
+    required this.requestType,
+    required this.title,
+    required this.content,
+    required this.bullets,
+    required this.relatedConcepts,
+    required this.cached,
+    required this.generatedAt,
+    required this.expiresAt,
+  });
+
+  final String cardId;
+  final String requestType;
+  final String title;
+  final String content;
+  final List<String> bullets;
+  final List<String> relatedConcepts;
+  final bool cached;
+  final DateTime generatedAt;
+  final DateTime expiresAt;
+
+  factory TutorCardResponse.fromJson(Map<String, dynamic> json) {
+    return TutorCardResponse(
+      cardId: json['card_id'] as String,
+      requestType: json['request_type'] as String? ?? 'explain',
+      title: json['title'] as String? ?? '',
+      content: json['content'] as String? ?? '',
+      bullets:
+          ((json['bullets'] as List?) ?? const <dynamic>[])
+              .map((item) => item.toString())
+              .toList(),
+      relatedConcepts:
+          ((json['related_concepts'] as List?) ?? const <dynamic>[])
+              .map((item) => item.toString())
+              .toList(),
+      cached: json['cached'] as bool? ?? false,
+      generatedAt: DateTime.parse(json['generated_at'] as String).toLocal(),
+      expiresAt: DateTime.parse(json['expires_at'] as String).toLocal(),
+    );
+  }
+}
+
+class CognitiveUpdateCardCandidate {
+  const CognitiveUpdateCardCandidate({
+    required this.cardId,
+    required this.question,
+    required this.answerExcerpt,
+  });
+
+  final String cardId;
+  final String question;
+  final String answerExcerpt;
+
+  factory CognitiveUpdateCardCandidate.fromJson(Map<String, dynamic> json) {
+    return CognitiveUpdateCardCandidate(
+      cardId: json['card_id'] as String,
+      question: json['question'] as String? ?? '',
+      answerExcerpt: json['answer_excerpt'] as String? ?? '',
+    );
+  }
+}
+
+class CognitiveUpdateMatch {
+  const CognitiveUpdateMatch({
+    required this.conceptId,
+    required this.conceptName,
+    required this.similarity,
+    required this.suggestedAction,
+    required this.cards,
+  });
+
+  final String conceptId;
+  final String conceptName;
+  final double similarity;
+  final String suggestedAction;
+  final List<CognitiveUpdateCardCandidate> cards;
+
+  factory CognitiveUpdateMatch.fromJson(Map<String, dynamic> json) {
+    return CognitiveUpdateMatch(
+      conceptId: json['concept_id'] as String,
+      conceptName: json['concept_name'] as String? ?? 'Unknown concept',
+      similarity: (json['similarity'] as num?)?.toDouble() ?? 0,
+      suggestedAction: json['suggested_action'] as String? ?? 'keep_separate',
+      cards:
+          ((json['cards'] as List?) ?? const <dynamic>[])
+              .whereType<Map<String, dynamic>>()
+              .map(CognitiveUpdateCardCandidate.fromJson)
+              .toList(),
+    );
+  }
+}
+
 class StudyRepository {
   StudyRepository({Dio? dio}) : _dio = dio ?? _buildDio();
 
@@ -233,7 +484,7 @@ class StudyRepository {
   final Dio _dio;
 
   Future<SourceGenerationResult> createTextSource({
-    required String title,
+    String? title,
     required String rawContent,
   }) async {
     await _authorize();
@@ -241,7 +492,7 @@ class StudyRepository {
       final response = await _dio.post<Map<String, dynamic>>(
         '/sources',
         data: {
-          'title': title.trim().isEmpty ? null : title.trim(),
+          'title': title == null || title.trim().isEmpty ? null : title.trim(),
           'source_type': 'text',
           'raw_content': rawContent.trim(),
         },
@@ -251,6 +502,99 @@ class StudyRepository {
         throw const StudyException('Source creation returned no payload.');
       }
       return SourceGenerationResult.fromJson(payload);
+    } on DioException catch (error) {
+      throw StudyException(_mapDioError(error));
+    }
+  }
+
+  Future<SourceGenerationResult> createLinkSource({required String url}) async {
+    await _authorize();
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/sources',
+        data: {'source_type': 'link', 'url': url.trim()},
+      );
+      final payload = response.data;
+      if (payload == null) {
+        throw const StudyException('Link source creation returned no payload.');
+      }
+      return SourceGenerationResult.fromJson(payload);
+    } on DioException catch (error) {
+      throw StudyException(_mapDioError(error));
+    }
+  }
+
+  Future<SourceGenerationResult> createPdfSource({
+    required String fileName,
+    required Uint8List bytes,
+  }) async {
+    await _authorize();
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/sources/upload',
+        data: FormData.fromMap({
+          'source_type': 'pdf',
+          'file': MultipartFile.fromBytes(bytes, filename: fileName),
+        }),
+        options: Options(contentType: Headers.multipartFormDataContentType),
+      );
+      final payload = response.data;
+      if (payload == null) {
+        throw const StudyException('PDF source creation returned no payload.');
+      }
+      return SourceGenerationResult.fromJson(payload);
+    } on DioException catch (error) {
+      throw StudyException(_mapDioError(error));
+    }
+  }
+
+  Future<CsvPreview> previewCsvFile({
+    required String fileName,
+    required Uint8List bytes,
+  }) async {
+    await _authorize();
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/sources/csv/preview',
+        data: FormData.fromMap({
+          'file': MultipartFile.fromBytes(bytes, filename: fileName),
+        }),
+        options: Options(contentType: Headers.multipartFormDataContentType),
+      );
+      final payload = response.data;
+      if (payload == null) {
+        throw const StudyException('CSV preview returned no payload.');
+      }
+      return CsvPreview.fromJson(payload);
+    } on DioException catch (error) {
+      throw StudyException(_mapDioError(error));
+    }
+  }
+
+  Future<CsvImportResult> importCsvFile({
+    required String fileName,
+    required Uint8List bytes,
+    required int questionColumn,
+    required int answerColumn,
+    List<int> tagColumns = const [],
+  }) async {
+    await _authorize();
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/sources/csv/import',
+        data: FormData.fromMap({
+          'file': MultipartFile.fromBytes(bytes, filename: fileName),
+          'question_column': questionColumn,
+          'answer_column': answerColumn,
+          if (tagColumns.isNotEmpty) 'tag_columns': tagColumns.join(','),
+        }),
+        options: Options(contentType: Headers.multipartFormDataContentType),
+      );
+      final payload = response.data;
+      if (payload == null) {
+        throw const StudyException('CSV import returned no payload.');
+      }
+      return CsvImportResult.fromJson(payload);
     } on DioException catch (error) {
       throw StudyException(_mapDioError(error));
     }
@@ -271,6 +615,12 @@ class StudyRepository {
   }
 
   Future<GenerationJob?> getLatestActiveGenerationJob() async {
+    return getLatestGenerationJob(activeOnly: true);
+  }
+
+  Future<GenerationJob?> getLatestGenerationJob({
+    bool activeOnly = false,
+  }) async {
     await _authorize();
     try {
       final response = await _dio.get<List<dynamic>>(
@@ -284,13 +634,31 @@ class StudyRepository {
               .where(
                 (job) =>
                     job.jobType == 'card_generation' &&
-                    (job.status == 'pending' || job.status == 'running'),
+                    (!activeOnly ||
+                        job.status == 'pending' ||
+                        job.status == 'running'),
               )
               .toList();
       if (jobs.isEmpty) {
         return null;
       }
       return jobs.first;
+    } on DioException catch (error) {
+      throw StudyException(_mapDioError(error));
+    }
+  }
+
+  Future<GenerationJob> retryJob(String jobId) async {
+    await _authorize();
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/jobs/$jobId/retry',
+      );
+      final payload = response.data;
+      if (payload == null) {
+        throw const StudyException('Job retry returned no payload.');
+      }
+      return GenerationJob.fromJson(payload);
     } on DioException catch (error) {
       throw StudyException(_mapDioError(error));
     }
@@ -411,6 +779,99 @@ class StudyRepository {
         throw const StudyException('Review summary returned no payload.');
       }
       return TodayReviewSummary.fromJson(payload);
+    } on DioException catch (error) {
+      throw StudyException(_mapDioError(error));
+    }
+  }
+
+  Future<InsightSnapshot> getInsightSnapshot() async {
+    await _authorize();
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/insights/snapshot',
+      );
+      final payload = response.data;
+      if (payload == null) {
+        throw const StudyException('Insight snapshot returned no payload.');
+      }
+      return InsightSnapshot.fromJson(payload);
+    } on DioException catch (error) {
+      throw StudyException(_mapDioError(error));
+    }
+  }
+
+  Future<TutorCardResponse> getTutorResponse({
+    required String cardId,
+    required String requestType,
+  }) async {
+    await _authorize();
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/cards/$cardId/tutor/$requestType',
+      );
+      final payload = response.data;
+      if (payload == null) {
+        throw const StudyException('Tutor response returned no payload.');
+      }
+      return TutorCardResponse.fromJson(payload);
+    } on DioException catch (error) {
+      throw StudyException(_mapDioError(error));
+    }
+  }
+
+  Future<List<CognitiveUpdateMatch>> previewCognitiveUpdate({
+    required String conceptName,
+    required String description,
+  }) async {
+    await _authorize();
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/insights/cognitive-update/preview',
+        data: {
+          'concept_name': conceptName.trim(),
+          'description': description.trim().isEmpty ? null : description.trim(),
+          'limit': 5,
+        },
+      );
+      final payload = response.data;
+      if (payload == null) {
+        throw const StudyException(
+          'Cognitive update preview returned no payload.',
+        );
+      }
+      return ((payload['matches'] as List?) ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .map(CognitiveUpdateMatch.fromJson)
+          .toList();
+    } on DioException catch (error) {
+      throw StudyException(_mapDioError(error));
+    }
+  }
+
+  Future<StudyCard> applyCognitiveUpdate({
+    required String cardId,
+    required String newEvidence,
+    required String sourceConceptName,
+    required String action,
+  }) async {
+    await _authorize();
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/insights/cognitive-update/apply',
+        data: {
+          'card_id': cardId,
+          'new_evidence': newEvidence.trim(),
+          'source_concept_name': sourceConceptName.trim(),
+          'action': action,
+        },
+      );
+      final payload = response.data;
+      if (payload == null) {
+        throw const StudyException(
+          'Cognitive update apply returned no payload.',
+        );
+      }
+      return StudyCard.fromJson(payload);
     } on DioException catch (error) {
       throw StudyException(_mapDioError(error));
     }

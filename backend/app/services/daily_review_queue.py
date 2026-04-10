@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Card, ConceptRelation, DailyReviewQueue, MemoryState
+from app.models import Card, ConceptRelation, DailyReviewQueue, MemoryState, MistakePattern
 
 
 def _utcnow() -> datetime:
@@ -21,10 +21,11 @@ def _priority_for_card(
     *,
     memory_state: MemoryState | None,
     relation_count: int,
+    weakness_count: int,
     now: datetime,
 ) -> float:
     if memory_state is None:
-        return 100.0 + relation_count * 2
+        return 100.0 + relation_count * 2 + weakness_count * 4
 
     overdue_bonus = 0.0
     if memory_state.next_review_at is not None:
@@ -41,8 +42,16 @@ def _priority_for_card(
         "new": 4.0,
     }.get(memory_state.state, 4.0)
     relation_bonus = relation_count * 1.5
+    weakness_bonus = weakness_count * 4
     difficulty_bonus = memory_state.difficulty
-    return state_bonus + overdue_bonus + lapse_bonus + relation_bonus + difficulty_bonus
+    return (
+        state_bonus
+        + overdue_bonus
+        + lapse_bonus
+        + relation_bonus
+        + weakness_bonus
+        + difficulty_bonus
+    )
 
 
 async def sync_daily_review_queue(
@@ -63,9 +72,25 @@ async def sync_daily_review_queue(
         .group_by(ConceptRelation.concept_a_id)
         .subquery()
     )
+    weakness_count_subquery = (
+        select(
+            MistakePattern.concept_id.label("concept_id"),
+            func.coalesce(func.sum(MistakePattern.occurrence_count), 0).label(
+                "weakness_count"
+            ),
+        )
+        .where(MistakePattern.user_id == user_id, MistakePattern.resolved == False)
+        .group_by(MistakePattern.concept_id)
+        .subquery()
+    )
 
     result = await db.execute(
-        select(Card, MemoryState, func.coalesce(relation_count_subquery.c.relation_count, 0))
+        select(
+            Card,
+            MemoryState,
+            func.coalesce(relation_count_subquery.c.relation_count, 0),
+            func.coalesce(weakness_count_subquery.c.weakness_count, 0),
+        )
         .join(
             MemoryState,
             and_(MemoryState.card_id == Card.id, MemoryState.user_id == user_id),
@@ -76,13 +101,18 @@ async def sync_daily_review_queue(
             relation_count_subquery.c.concept_id == Card.concept_id,
             isouter=True,
         )
+        .join(
+            weakness_count_subquery,
+            weakness_count_subquery.c.concept_id == Card.concept_id,
+            isouter=True,
+        )
         .where(Card.user_id == user_id, Card.is_active == True)
         .where(or_(MemoryState.id == None, MemoryState.next_review_at <= now))
         .order_by(MemoryState.next_review_at.asc().nulls_first(), Card.created_at.asc())
         .limit(limit)
     )
     due_rows = result.all()
-    due_card_ids = {card.id for card, _, _ in due_rows}
+    due_card_ids = {card.id for card, _, _, _ in due_rows}
 
     existing_rows = await db.execute(
         select(DailyReviewQueue).where(
@@ -102,10 +132,11 @@ async def sync_daily_review_queue(
             delete(DailyReviewQueue).where(DailyReviewQueue.id.in_(stale_pending_ids))
         )
 
-    for card, memory_state, relation_count in due_rows:
+    for card, memory_state, relation_count, weakness_count in due_rows:
         priority = _priority_for_card(
             memory_state=memory_state,
             relation_count=int(relation_count or 0),
+            weakness_count=int(weakness_count or 0),
             now=now,
         )
         existing = existing_by_card.get(card.id)

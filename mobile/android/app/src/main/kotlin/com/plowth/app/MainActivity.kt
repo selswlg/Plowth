@@ -1,4 +1,4 @@
-package com.realapp.real_app
+package com.plowth.app
 
 import io.flutter.embedding.android.FlutterActivity
 

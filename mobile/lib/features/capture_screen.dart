@@ -1,12 +1,17 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../app/theme/app_theme.dart';
 import 'study_repository.dart';
 
-class CaptureScreen extends StatefulWidget {
-  const CaptureScreen({super.key, required this.onStartReview});
+enum _CaptureMode { text, csv, link, pdf }
 
-  final VoidCallback onStartReview;
+class CaptureScreen extends StatefulWidget {
+  const CaptureScreen({super.key, required this.onCaptureSubmitted});
+
+  final VoidCallback onCaptureSubmitted;
 
   @override
   State<CaptureScreen> createState() => _CaptureScreenState();
@@ -14,51 +19,38 @@ class CaptureScreen extends StatefulWidget {
 
 class _CaptureScreenState extends State<CaptureScreen> {
   final StudyRepository _repository = StudyRepository();
-  final TextEditingController _titleController = TextEditingController();
   final TextEditingController _contentController = TextEditingController();
+  final TextEditingController _urlController = TextEditingController();
 
+  _CaptureMode _mode = _CaptureMode.text;
   bool _isSubmitting = false;
+  bool _isPreviewing = false;
   String? _errorMessage;
-  GenerationJob? _job;
-  SourceMaterial? _source;
-  List<StudyCard> _cards = const [];
+  SourceGenerationResult? _latestSubmission;
+  CsvImportResult? _latestCsvImport;
 
-  @override
-  void initState() {
-    super.initState();
-    _resumeActiveGeneration();
-  }
+  String? _csvFileName;
+  Uint8List? _csvBytes;
+  CsvPreview? _csvPreview;
+  int? _questionColumn;
+  int? _answerColumn;
+  Set<int> _tagColumns = <int>{};
+
+  bool get _isBusy => _isSubmitting || _isPreviewing;
 
   @override
   void dispose() {
-    _titleController.dispose();
+    _urlController.dispose();
     _contentController.dispose();
     super.dispose();
   }
 
   Future<void> _generateCards() async {
-    if (_job != null &&
-        (_job!.status == 'pending' || _job!.status == 'running') &&
-        _source != null) {
-      setState(() {
-        _isSubmitting = true;
-        _errorMessage = null;
-      });
-      await _pollGeneration(
-        SourceGenerationResult(
-          sourceId: _source!.id,
-          jobId: _job!.id,
-          status: _job!.status,
-        ),
-      );
-      return;
-    }
-
     final content = _contentController.text.trim();
     if (content.length < 30) {
       setState(() {
         _errorMessage =
-            'Add at least a short paragraph so the generator has enough context.';
+            'Add at least a short paragraph so there is enough context.';
       });
       return;
     }
@@ -66,61 +58,27 @@ class _CaptureScreenState extends State<CaptureScreen> {
     setState(() {
       _isSubmitting = true;
       _errorMessage = null;
-      _job = null;
-      _source = null;
-      _cards = const [];
+      _latestCsvImport = null;
     });
 
     try {
-      final result = await _repository.createTextSource(
-        title: _titleController.text,
-        rawContent: content,
-      );
-
-      await _pollGeneration(result);
-    } on StudyException catch (error) {
+      final result = await _repository.createTextSource(rawContent: content);
       if (!mounted) {
         return;
       }
+
+      _contentController.clear();
       setState(() {
         _isSubmitting = false;
-        _errorMessage = error.message;
-      });
-    }
-  }
-
-  Future<void> _resumeActiveGeneration() async {
-    try {
-      final job = await _repository.getLatestActiveGenerationJob();
-      if (job == null || job.sourceId == null) {
-        return;
-      }
-
-      final source = await _repository.getSource(job.sourceId!);
-      if (!mounted) {
-        return;
-      }
-
-      if (_titleController.text.trim().isEmpty) {
-        _titleController.text = source.title ?? '';
-      }
-      if (_contentController.text.trim().isEmpty && source.rawContent != null) {
-        _contentController.text = source.rawContent!;
-      }
-
-      setState(() {
-        _job = job;
-        _source = source;
-        _isSubmitting = true;
+        _latestSubmission = result;
       });
 
-      await _pollGeneration(
-        SourceGenerationResult(
-          sourceId: source.id,
-          jobId: job.id,
-          status: job.status,
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Material received. Track progress from Home.'),
         ),
       );
+      widget.onCaptureSubmitted();
     } on StudyException catch (error) {
       if (!mounted) {
         return;
@@ -132,190 +90,345 @@ class _CaptureScreenState extends State<CaptureScreen> {
     }
   }
 
-  Future<void> _pollGeneration(SourceGenerationResult result) async {
-    for (var attempt = 0; attempt < 20; attempt++) {
-      final source = await _repository.getSource(result.sourceId);
-      final job =
-          result.jobId == null ? null : await _repository.getJob(result.jobId!);
+  Future<void> _submitLink() async {
+    final url = _urlController.text.trim();
+    final parsed = Uri.tryParse(url);
+    if (parsed == null ||
+        !parsed.hasScheme ||
+        (parsed.scheme != 'http' && parsed.scheme != 'https') ||
+        parsed.host.isEmpty) {
+      setState(() {
+        _errorMessage = 'Enter a full http:// or https:// URL.';
+      });
+      return;
+    }
 
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+      _latestCsvImport = null;
+    });
+
+    try {
+      final result = await _repository.createLinkSource(url: url);
       if (!mounted) {
         return;
       }
 
+      _urlController.clear();
       setState(() {
-        _source = source;
-        _job = job;
+        _isSubmitting = false;
+        _latestSubmission = result;
       });
 
-      final generationFailed =
-          source.status == 'error' || job?.status == 'failed';
-      if (generationFailed) {
-        throw StudyException(
-          job?.errorMessage ??
-              source.errorMessage ??
-              'Card generation failed unexpectedly.',
-        );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Link received. Track progress from Home.'),
+        ),
+      );
+      widget.onCaptureSubmitted();
+    } on StudyException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isSubmitting = false;
+        _errorMessage = error.message;
+      });
+    }
+  }
+
+  Future<void> _pickPdfFile() async {
+    setState(() {
+      _isPreviewing = true;
+      _errorMessage = null;
+      _latestSubmission = null;
+      _latestCsvImport = null;
+    });
+
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['pdf'],
+        withData: true,
+      );
+      if (result == null) {
+        if (mounted) {
+          setState(() => _isPreviewing = false);
+        }
+        return;
       }
 
-      final generationDone =
-          source.status == 'done' || job?.status == 'completed';
-      if (generationDone) {
-        final cards = await _repository.getCards(sourceId: result.sourceId);
+      final pickedFile = result.files.single;
+      final bytes = pickedFile.bytes;
+      if (bytes == null || bytes.isEmpty) {
         if (!mounted) {
           return;
         }
-        _titleController.text = source.title ?? _titleController.text;
-        _contentController.text = source.rawContent ?? _contentController.text;
         setState(() {
-          _cards = cards;
-          _source = source;
-          _job = job;
-          _isSubmitting = false;
+          _isPreviewing = false;
+          _errorMessage = 'The selected PDF file could not be read.';
         });
         return;
       }
 
-      await Future<void>.delayed(const Duration(seconds: 1));
-    }
+      setState(() {
+        _isPreviewing = false;
+        _isSubmitting = true;
+      });
 
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _isSubmitting = false;
-      _errorMessage =
-          'Generation is still running. Resume polling instead of creating a duplicate source.';
-    });
-  }
-
-  Future<void> _editCard(StudyCard card) async {
-    final draft = await _showCardEditor(card);
-    if (draft == null) {
-      return;
-    }
-
-    setState(() {
-      _errorMessage = null;
-    });
-
-    try {
-      final updated = await _repository.updateCard(
-        cardId: card.id,
-        question: draft.question,
-        answer: draft.answer,
-        difficulty: draft.difficulty,
+      final upload = await _repository.createPdfSource(
+        fileName: pickedFile.name,
+        bytes: bytes,
       );
+      if (!mounted) {
+        return;
+      }
 
+      setState(() {
+        _isSubmitting = false;
+        _latestSubmission = upload;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('PDF received. Track progress from Home.'),
+        ),
+      );
+      widget.onCaptureSubmitted();
+    } on StudyException catch (error) {
       if (!mounted) {
         return;
       }
       setState(() {
-        _cards = [
-          for (final existing in _cards)
-            if (existing.id == updated.id) updated else existing,
-        ];
+        _isPreviewing = false;
+        _isSubmitting = false;
+        _errorMessage = error.message;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isPreviewing = false;
+        _isSubmitting = false;
+        _errorMessage = 'PDF file selection failed unexpectedly.';
+      });
+    }
+  }
+
+  Future<void> _pickCsvFile() async {
+    setState(() {
+      _isPreviewing = true;
+      _errorMessage = null;
+      _latestSubmission = null;
+      _latestCsvImport = null;
+    });
+
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['csv'],
+        withData: true,
+      );
+      if (result == null) {
+        if (mounted) {
+          setState(() => _isPreviewing = false);
+        }
+        return;
+      }
+
+      final pickedFile = result.files.single;
+      final bytes = pickedFile.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _isPreviewing = false;
+          _errorMessage = 'The selected CSV file could not be read.';
+        });
+        return;
+      }
+
+      final preview = await _repository.previewCsvFile(
+        fileName: pickedFile.name,
+        bytes: bytes,
+      );
+      if (!mounted) {
+        return;
+      }
+
+      final questionColumn = _guessColumn(preview.columns, const [
+        'question',
+        'term',
+        'front',
+        'prompt',
+      ], fallback: 0);
+      final answerColumn = _guessColumn(
+        preview.columns,
+        const ['answer', 'definition', 'back', 'response'],
+        fallback: preview.columns.length > 1 ? 1 : 0,
+        avoid: questionColumn,
+      );
+
+      setState(() {
+        _isPreviewing = false;
+        _csvFileName = pickedFile.name;
+        _csvBytes = bytes;
+        _csvPreview = preview;
+        _questionColumn = questionColumn;
+        _answerColumn = answerColumn;
+        _tagColumns = <int>{};
       });
     } on StudyException catch (error) {
       if (!mounted) {
         return;
       }
       setState(() {
+        _isPreviewing = false;
+        _errorMessage = error.message;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isPreviewing = false;
+        _errorMessage = 'CSV file selection failed unexpectedly.';
+      });
+    }
+  }
+
+  Future<void> _importCsvCards() async {
+    final fileName = _csvFileName;
+    final bytes = _csvBytes;
+    final questionColumn = _questionColumn;
+    final answerColumn = _answerColumn;
+    if (fileName == null ||
+        bytes == null ||
+        questionColumn == null ||
+        answerColumn == null) {
+      setState(() {
+        _errorMessage = 'Choose a CSV file and map the required columns first.';
+      });
+      return;
+    }
+    if (questionColumn == answerColumn) {
+      setState(() {
+        _errorMessage = 'Question and answer must use different columns.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final result = await _repository.importCsvFile(
+        fileName: fileName,
+        bytes: bytes,
+        questionColumn: questionColumn,
+        answerColumn: answerColumn,
+        tagColumns: _tagColumns.toList()..sort(),
+      );
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isSubmitting = false;
+        _latestCsvImport = result;
+        _csvFileName = null;
+        _csvBytes = null;
+        _csvPreview = null;
+        _questionColumn = null;
+        _answerColumn = null;
+        _tagColumns = <int>{};
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('CSV cards are ready. Start from Home.')),
+      );
+      widget.onCaptureSubmitted();
+    } on StudyException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isSubmitting = false;
         _errorMessage = error.message;
       });
     }
   }
 
-  Future<_CardDraft?> _showCardEditor(StudyCard card) {
-    final questionController = TextEditingController(text: card.question);
-    final answerController = TextEditingController(text: card.answer);
-    var difficulty = card.difficulty;
+  int _guessColumn(
+    List<String> columns,
+    List<String> keywords, {
+    required int fallback,
+    int? avoid,
+  }) {
+    for (var index = 0; index < columns.length; index += 1) {
+      if (index == avoid) {
+        continue;
+      }
+      final lower = columns[index].toLowerCase();
+      if (keywords.any(lower.contains)) {
+        return index;
+      }
+    }
 
-    return showModalBottomSheet<_CardDraft>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.surface,
-      builder:
-          (context) => StatefulBuilder(
-            builder:
-                (context, setSheetState) => Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    AppSpacing.lg,
-                    AppSpacing.lg,
-                    AppSpacing.lg,
-                    MediaQuery.of(context).viewInsets.bottom + AppSpacing.lg,
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Edit Card', style: AppTypography.headlineMedium),
-                      const SizedBox(height: AppSpacing.md),
-                      TextField(
-                        controller: questionController,
-                        maxLines: 3,
-                        decoration: const InputDecoration(
-                          labelText: 'Question',
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      TextField(
-                        controller: answerController,
-                        maxLines: 5,
-                        decoration: const InputDecoration(labelText: 'Answer'),
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      Text('Difficulty', style: AppTypography.labelLarge),
-                      const SizedBox(height: AppSpacing.sm),
-                      SegmentedButton<int>(
-                        segments: const [
-                          ButtonSegment(value: 1, label: Text('1')),
-                          ButtonSegment(value: 2, label: Text('2')),
-                          ButtonSegment(value: 3, label: Text('3')),
-                          ButtonSegment(value: 4, label: Text('4')),
-                          ButtonSegment(value: 5, label: Text('5')),
-                        ],
-                        selected: {difficulty},
-                        onSelectionChanged: (selection) {
-                          setSheetState(() {
-                            difficulty = selection.first;
-                          });
-                        },
-                      ),
-                      const SizedBox(height: AppSpacing.lg),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: () {
-                            Navigator.of(context).pop(
-                              _CardDraft(
-                                question: questionController.text,
-                                answer: answerController.text,
-                                difficulty: difficulty,
-                              ),
-                            );
-                          },
-                          child: const Text('Save Changes'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-          ),
-    );
+    if (fallback >= 0 && fallback < columns.length && fallback != avoid) {
+      return fallback;
+    }
+    for (var index = 0; index < columns.length; index += 1) {
+      if (index != avoid) {
+        return index;
+      }
+    }
+    return 0;
   }
 
-  List<String> _qualityWarnings(StudyCard card) {
-    final warnings = <String>[];
-    if (card.question.trim().length < 18) {
-      warnings.add('Question is terse');
+  void _setMode(_CaptureMode mode) {
+    if (_isBusy) {
+      return;
     }
-    if (card.answer.trim().length < 32) {
-      warnings.add('Answer needs more context');
+    setState(() {
+      _mode = mode;
+      _errorMessage = null;
+    });
+  }
+
+  void _setQuestionColumn(int? value) {
+    if (value == null) {
+      return;
     }
-    if (card.difficulty >= 5) {
-      warnings.add('High difficulty');
+    setState(() {
+      _questionColumn = value;
+      _tagColumns.remove(value);
+    });
+  }
+
+  void _setAnswerColumn(int? value) {
+    if (value == null) {
+      return;
     }
-    return warnings;
+    setState(() {
+      _answerColumn = value;
+      _tagColumns.remove(value);
+    });
+  }
+
+  void _toggleTagColumn(int index, bool selected) {
+    setState(() {
+      if (selected) {
+        _tagColumns.add(index);
+      } else {
+        _tagColumns.remove(index);
+      }
+    });
   }
 
   @override
@@ -337,7 +450,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
                   Text('Capture', style: AppTypography.bodyMedium),
                   const SizedBox(height: 4),
                   Text(
-                    'Turn raw notes into a review set',
+                    'Add material for your next review set',
                     style: AppTypography.displayMedium,
                   ),
                 ],
@@ -346,18 +459,19 @@ class _CaptureScreenState extends State<CaptureScreen> {
           ),
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+            sliver: SliverToBoxAdapter(
+              child: _ModeSelector(
+                selectedMode: _mode,
+                isBusy: _isBusy,
+                onModeChanged: _setMode,
+              ),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
             sliver: SliverToBoxAdapter(child: _buildComposerCard()),
           ),
-          if (_source != null || _job != null)
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.lg,
-                AppSpacing.lg,
-                AppSpacing.lg,
-                0,
-              ),
-              sliver: SliverToBoxAdapter(child: _buildStatusCard()),
-            ),
           if (_errorMessage != null)
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(
@@ -374,53 +488,328 @@ class _CaptureScreenState extends State<CaptureScreen> {
                 ),
               ),
             ),
-          if (_cards.isNotEmpty)
+          if (_latestSubmission != null)
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(
                 AppSpacing.lg,
                 AppSpacing.lg,
                 AppSpacing.lg,
-                AppSpacing.xxl,
+                0,
               ),
-              sliver: SliverList.list(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Generated Cards',
-                          style: AppTypography.titleLarge,
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: widget.onStartReview,
-                        child: const Text('Start Review'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    'Review and tighten the wording before you study.',
-                    style: AppTypography.bodyMedium,
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  for (final card in _cards)
-                    _PreviewCard(
-                      card: card,
-                      warnings: _qualityWarnings(card),
-                      onTap: () => _editCard(card),
-                    ),
-                ],
+              sliver: const SliverToBoxAdapter(child: _QueuedMaterialCard()),
+            ),
+          if (_latestCsvImport != null)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.lg,
+                0,
               ),
-            )
-          else
-            const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxl)),
+              sliver: SliverToBoxAdapter(
+                child: _CsvImportCompleteCard(result: _latestCsvImport!),
+              ),
+            ),
+          const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxl)),
         ],
       ),
     );
   }
 
   Widget _buildComposerCard() {
+    return switch (_mode) {
+      _CaptureMode.text => _buildTextComposerCard(),
+      _CaptureMode.csv => _buildCsvComposerCard(),
+      _CaptureMode.link => _buildLinkComposerCard(),
+      _CaptureMode.pdf => _buildPdfComposerCard(),
+    };
+  }
+
+  Widget _buildTextComposerCard() {
+    return _CapturePanel(
+      title: 'Learning material',
+      description:
+          'Paste notes, lecture excerpts, or a short concept summary. Cards will be prepared in the background.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _contentController,
+            maxLines: 12,
+            minLines: 8,
+            decoration: const InputDecoration(
+              hintText:
+                  'Paste the material you want to study. A title will be created automatically.',
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _isBusy ? null : _generateCards,
+              child: Text(_isSubmitting ? 'Sending...' : 'Make Cards'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCsvComposerCard() {
+    final preview = _csvPreview;
+    return _CapturePanel(
+      title: 'CSV import',
+      description:
+          'Choose a CSV, confirm the question and answer columns, then import each row as a card.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _isBusy ? null : _pickCsvFile,
+              icon:
+                  _isPreviewing
+                      ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                      : const Icon(Icons.upload_file_rounded),
+              label: Text(_isPreviewing ? 'Reading CSV...' : 'Choose CSV File'),
+            ),
+          ),
+          if (preview != null) ...[
+            const SizedBox(height: AppSpacing.lg),
+            Text(
+              _csvFileName ?? 'Selected CSV',
+              style: AppTypography.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              '${preview.rowCount} rows detected. Previewing up to 5 rows.',
+              style: AppTypography.bodyMedium,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _CsvPreviewTable(preview: preview),
+            const SizedBox(height: AppSpacing.lg),
+            _ColumnDropdown(
+              label: 'Question column',
+              columns: preview.columns,
+              value: _questionColumn,
+              onChanged: _isBusy ? null : _setQuestionColumn,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _ColumnDropdown(
+              label: 'Answer column',
+              columns: preview.columns,
+              value: _answerColumn,
+              onChanged: _isBusy ? null : _setAnswerColumn,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Text('Tag columns', style: AppTypography.titleMedium),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Optional columns will be stored as card tags.',
+              style: AppTypography.bodyMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.sm,
+              children: [
+                for (var index = 0; index < preview.columns.length; index += 1)
+                  FilterChip(
+                    label: Text(preview.columns[index]),
+                    selected: _tagColumns.contains(index),
+                    onSelected:
+                        _isBusy ||
+                                index == _questionColumn ||
+                                index == _answerColumn
+                            ? null
+                            : (selected) => _toggleTagColumn(index, selected),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isBusy ? null : _importCsvCards,
+                child: Text(_isSubmitting ? 'Importing...' : 'Import Cards'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLinkComposerCard() {
+    return _CapturePanel(
+      title: 'Link capture',
+      description:
+          'Paste a public article, guide, or documentation URL. Readable text will be extracted before cards are prepared.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _urlController,
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+              hintText: 'https://example.com/article',
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _isBusy ? null : _submitLink,
+              child: Text(_isSubmitting ? 'Sending...' : 'Make Cards'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPdfComposerCard() {
+    return _CapturePanel(
+      title: 'PDF upload',
+      description:
+          'Choose a text-based PDF. Selectable text will be extracted before cards are prepared.',
+      child: SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: _isBusy ? null : _pickPdfFile,
+          icon:
+              _isPreviewing || _isSubmitting
+                  ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                  : const Icon(Icons.picture_as_pdf_rounded),
+          label: Text(
+            _isSubmitting
+                ? 'Uploading PDF...'
+                : _isPreviewing
+                ? 'Reading PDF...'
+                : 'Choose PDF File',
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModeSelector extends StatelessWidget {
+  const _ModeSelector({
+    required this.selectedMode,
+    required this.isBusy,
+    required this.onModeChanged,
+  });
+
+  final _CaptureMode selectedMode;
+  final bool isBusy;
+  final ValueChanged<_CaptureMode> onModeChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final itemWidth = (constraints.maxWidth - AppSpacing.sm) / 2;
+        return Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: [
+            SizedBox(
+              width: itemWidth,
+              child: _ModeButton(
+                label: 'Text',
+                icon: Icons.notes_rounded,
+                selected: selectedMode == _CaptureMode.text,
+                onTap: isBusy ? null : () => onModeChanged(_CaptureMode.text),
+              ),
+            ),
+            SizedBox(
+              width: itemWidth,
+              child: _ModeButton(
+                label: 'CSV',
+                icon: Icons.table_chart_rounded,
+                selected: selectedMode == _CaptureMode.csv,
+                onTap: isBusy ? null : () => onModeChanged(_CaptureMode.csv),
+              ),
+            ),
+            SizedBox(
+              width: itemWidth,
+              child: _ModeButton(
+                label: 'Link',
+                icon: Icons.link_rounded,
+                selected: selectedMode == _CaptureMode.link,
+                onTap: isBusy ? null : () => onModeChanged(_CaptureMode.link),
+              ),
+            ),
+            SizedBox(
+              width: itemWidth,
+              child: _ModeButton(
+                label: 'PDF',
+                icon: Icons.picture_as_pdf_rounded,
+                selected: selectedMode == _CaptureMode.pdf,
+                onTap: isBusy ? null : () => onModeChanged(_CaptureMode.pdf),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ModeButton extends StatelessWidget {
+  const _ModeButton({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? AppColors.primary : AppColors.surfaceCard;
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: color,
+        foregroundColor: AppColors.textPrimary,
+        side: BorderSide(
+          color: selected ? AppColors.primaryLight : AppColors.border,
+        ),
+      ),
+    );
+  }
+}
+
+class _CapturePanel extends StatelessWidget {
+  const _CapturePanel({
+    required this.title,
+    required this.description,
+    required this.child,
+  });
+
+  final String title;
+  final String description;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
@@ -431,55 +820,99 @@ class _CaptureScreenState extends State<CaptureScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Material', style: AppTypography.titleLarge),
+          Text(title, style: AppTypography.titleLarge),
           const SizedBox(height: AppSpacing.sm),
-          Text(
-            'Paste notes, lecture snippets, or a concept summary. The Phase 2 pipeline will chunk it, create concepts, and draft cards.',
-            style: AppTypography.bodyMedium,
-          ),
+          Text(description, style: AppTypography.bodyMedium),
           const SizedBox(height: AppSpacing.md),
-          TextField(
-            controller: _titleController,
-            decoration: const InputDecoration(
-              labelText: 'Title',
-              hintText: 'Optional topic label',
-            ),
-          ),
-          const SizedBox(height: AppSpacing.md),
-          TextField(
-            controller: _contentController,
-            maxLines: 10,
-            decoration: const InputDecoration(
-              labelText: 'Notes',
-              hintText: 'Paste the material you want to turn into cards.',
-            ),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _isSubmitting ? null : _generateCards,
-              child: Text(
-                _isSubmitting
-                    ? 'Generating Cards...'
-                    : (_job != null &&
-                        (_job!.status == 'pending' ||
-                            _job!.status == 'running'))
-                    ? 'Resume Generation'
-                    : 'Generate Review Set',
-              ),
-            ),
-          ),
+          child,
         ],
       ),
     );
   }
+}
 
-  Widget _buildStatusCard() {
-    final sourceStatus = _source?.status ?? 'analyzing';
-    final jobStatus = _job?.status ?? 'pending';
-    final cardCount = _source?.metadata?['card_count'];
+class _ColumnDropdown extends StatelessWidget {
+  const _ColumnDropdown({
+    required this.label,
+    required this.columns,
+    required this.value,
+    required this.onChanged,
+  });
 
+  final String label;
+  final List<String> columns;
+  final int? value;
+  final ValueChanged<int?>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<int>(
+      value: value,
+      decoration: InputDecoration(labelText: label),
+      items: [
+        for (var index = 0; index < columns.length; index += 1)
+          DropdownMenuItem(value: index, child: Text(columns[index])),
+      ],
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _CsvPreviewTable extends StatelessWidget {
+  const _CsvPreviewTable({required this.preview});
+
+  final CsvPreview preview;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppRadius.sm),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: DataTable(
+          headingRowColor: WidgetStateProperty.all(AppColors.surfaceLight),
+          dataRowMinHeight: 44,
+          dataRowMaxHeight: 56,
+          columns: [
+            for (final column in preview.columns)
+              DataColumn(label: Text(column, style: AppTypography.labelSmall)),
+          ],
+          rows: [
+            for (final row in preview.sampleRows)
+              DataRow(
+                cells: [
+                  for (final column in preview.columns)
+                    DataCell(
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 160),
+                        child: Text(
+                          _truncateCell(row[column] ?? ''),
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTypography.bodySmall,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _truncateCell(String value) {
+    if (value.length <= 48) {
+      return value;
+    }
+    return '${value.substring(0, 45)}...';
+  }
+}
+
+class _QueuedMaterialCard extends StatelessWidget {
+  const _QueuedMaterialCard();
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
@@ -487,125 +920,72 @@ class _CaptureScreenState extends State<CaptureScreen> {
         borderRadius: BorderRadius.circular(AppRadius.lg),
         border: Border.all(color: AppColors.borderLight),
       ),
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: AppSpacing.sm),
-              Expanded(
-                child: Text(
-                  _cards.isEmpty ? 'Analyzing material' : 'Generation complete',
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Cards are being prepared',
                   style: AppTypography.titleMedium,
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          Text(
-            'Source: $sourceStatus  •  Job: $jobStatus',
-            style: AppTypography.bodyMedium,
-          ),
-          if (cardCount != null) ...[
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              '$cardCount cards drafted from this source.',
-              style: AppTypography.bodySmall,
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'You can leave this screen. Home will show the latest progress.',
+                  style: AppTypography.bodyMedium,
+                ),
+              ],
             ),
-          ],
+          ),
         ],
       ),
     );
   }
 }
 
-class _PreviewCard extends StatelessWidget {
-  const _PreviewCard({
-    required this.card,
-    required this.warnings,
-    required this.onTap,
-  });
+class _CsvImportCompleteCard extends StatelessWidget {
+  const _CsvImportCompleteCard({required this.result});
 
-  final StudyCard card;
-  final List<String> warnings;
-  final VoidCallback onTap;
+  final CsvImportResult result;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.md),
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          decoration: BoxDecoration(
-            gradient: AppColors.cardGradient,
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      card.cardType.toUpperCase(),
-                      style: AppTypography.labelSmall,
-                    ),
-                  ),
-                  Text(
-                    'D${card.difficulty}',
-                    style: AppTypography.labelSmall.copyWith(
-                      color: AppColors.accent,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(card.question, style: AppTypography.titleMedium),
-              const SizedBox(height: AppSpacing.sm),
-              Text(card.answer, style: AppTypography.bodyMedium),
-              if (warnings.isNotEmpty) ...[
-                const SizedBox(height: AppSpacing.md),
-                Wrap(
-                  spacing: AppSpacing.sm,
-                  runSpacing: AppSpacing.sm,
-                  children:
-                      warnings
-                          .map(
-                            (warning) => Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.accentOrange.withValues(
-                                  alpha: 0.16,
-                                ),
-                                borderRadius: BorderRadius.circular(
-                                  AppRadius.full,
-                                ),
-                              ),
-                              child: Text(
-                                warning,
-                                style: AppTypography.labelSmall.copyWith(
-                                  color: AppColors.accentOrange,
-                                ),
-                              ),
-                            ),
-                          )
-                          .toList(),
+    final skippedText =
+        result.skippedCount == 0 ? '' : ' ${result.skippedCount} rows skipped.';
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.borderLight),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.check_circle_rounded, color: AppColors.ratingGood),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('CSV cards are ready', style: AppTypography.titleMedium),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  '${result.cardCount} cards imported from ${result.rowCount} rows.$skippedText',
+                  style: AppTypography.bodyMedium,
                 ),
               ],
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -641,16 +1021,4 @@ class _InlineMessage extends StatelessWidget {
       ),
     );
   }
-}
-
-class _CardDraft {
-  const _CardDraft({
-    required this.question,
-    required this.answer,
-    required this.difficulty,
-  });
-
-  final String question;
-  final String answer;
-  final int difficulty;
 }

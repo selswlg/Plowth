@@ -4,22 +4,23 @@ import 'app/theme/app_theme.dart';
 import 'features/auth/session_repository.dart';
 import 'features/capture_screen.dart';
 import 'features/home/home_screen.dart';
+import 'features/insight_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
-import 'features/review_screen.dart';
+import 'features/review_session_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const RealApp());
+  runApp(const PlowthApp());
 }
 
-class RealApp extends StatefulWidget {
-  const RealApp({super.key});
+class PlowthApp extends StatefulWidget {
+  const PlowthApp({super.key});
 
   @override
-  State<RealApp> createState() => _RealAppState();
+  State<PlowthApp> createState() => _PlowthAppState();
 }
 
-class _RealAppState extends State<RealApp> {
+class _PlowthAppState extends State<PlowthApp> {
   late final SessionRepository _sessionRepository;
 
   AppLaunchState? _launchState;
@@ -153,6 +154,7 @@ class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
   int _reviewRefreshSeed = 0;
   int _homeRefreshSeed = 0;
+  int _insightRefreshSeed = 0;
 
   List<Widget> get _screens => [
     HomeScreen(
@@ -165,12 +167,8 @@ class _MainShellState extends State<MainShell> {
       refreshSeed: _reviewRefreshSeed,
       onCaptureRequested: () => _setTab(2),
     ),
-    CaptureScreen(onStartReview: () => _setTab(1, refreshReview: true)),
-    const _PlaceholderScreen(
-      title: 'Insight',
-      description: 'Analytics and coaching arrive after the core loop.',
-      icon: Icons.insights_rounded,
-    ),
+    CaptureScreen(onCaptureSubmitted: () => _setTab(0)),
+    InsightScreen(refreshSeed: _insightRefreshSeed),
     const _PlaceholderScreen(
       title: 'Profile',
       description: 'Account upgrade and preferences are still pending.',
@@ -186,6 +184,9 @@ class _MainShellState extends State<MainShell> {
       }
       if (index == 0) {
         _homeRefreshSeed += 1;
+      }
+      if (index == 3) {
+        _insightRefreshSeed += 1;
       }
     });
   }

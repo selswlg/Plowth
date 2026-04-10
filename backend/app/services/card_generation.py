@@ -127,11 +127,91 @@ def _keyword_candidates(text: str) -> list[str]:
     return [token for token, _ in counts.most_common(6)]
 
 
+def infer_domain_hint(text: str) -> str:
+    """Classify material into a lightweight domain without schema changes."""
+    lower = text.lower()
+    code_markers = (
+        "def ",
+        "class ",
+        "function ",
+        "return ",
+        "import ",
+        "select ",
+        "const ",
+        "let ",
+        "=>",
+        "```",
+    )
+    if any(marker in lower for marker in code_markers):
+        return "code"
+
+    language_markers = (
+        "vocabulary",
+        "grammar",
+        "pronunciation",
+        "conjugation",
+        "translation",
+        "synonym",
+        "antonym",
+    )
+    if any(marker in lower for marker in language_markers):
+        return "language"
+
+    exam_markers = (
+        "exam",
+        "quiz",
+        "test",
+        "formula",
+        "definition",
+        "theorem",
+        "license",
+        "certification",
+    )
+    if any(marker in lower for marker in exam_markers):
+        return "exam"
+
+    return "general"
+
+
+def _domain_subtype(domain_hint: str, draft: _ConceptDraft) -> str:
+    text = f"{draft.name} {draft.description}".lower()
+    if domain_hint == "code":
+        if any(marker in text for marker in ("syntax", "function", "class", "return")):
+            return "syntax"
+        return "implementation"
+    if domain_hint == "language":
+        if any(marker in text for marker in ("word", "vocabulary", "synonym")):
+            return "vocabulary"
+        return "grammar"
+    if domain_hint == "exam":
+        return "recall"
+    return "concept"
+
+
 def _truncate_words(text: str, max_words: int) -> str:
     words = text.split()
     if len(words) <= max_words:
         return text.strip()
     return " ".join(words[:max_words]).strip()
+
+
+def infer_source_title(raw_text: str) -> str:
+    """Infer a stable local title without requiring a model call."""
+    text = " ".join(raw_text.split()).strip()
+    if not text:
+        return "Captured material"
+
+    first_sentence = _split_sentences(text)[0]
+    if ":" in first_sentence:
+        head, _, _ = first_sentence.partition(":")
+        head = head.strip()
+        if 3 <= len(head) <= 80:
+            return head
+
+    title = _truncate_words(first_sentence, 8)
+    if len(title) > 80:
+        return f"{title[:77].rstrip()}..."
+    return title or "Captured material"
 
 
 def _infer_concept_name(text: str, fallback_index: int) -> str:
@@ -173,7 +253,11 @@ def _estimate_difficulty(description: str, details: list[str]) -> int:
     return 5
 
 
-def _build_cards_for_concept(draft: _ConceptDraft) -> list[dict]:
+def _build_cards_for_concept(
+    draft: _ConceptDraft,
+    *,
+    domain_hint: str = "general",
+) -> list[dict]:
     is_korean = _contains_hangul(f"{draft.name} {draft.description}")
     difficulty = _estimate_difficulty(draft.description, draft.details)
 
@@ -185,6 +269,15 @@ def _build_cards_for_concept(draft: _ConceptDraft) -> list[dict]:
         definition_question = f'What is the core idea behind "{draft.name}"?'
         principle_question = f'Why does "{draft.name}" matter in this material?'
         application_question = f'What example or application best illustrates "{draft.name}"?'
+
+    if domain_hint == "code" and not is_korean:
+        definition_question = f'What does "{draft.name}" do in this code context?'
+        application_question = f'How would you use or debug "{draft.name}"?'
+    elif domain_hint == "language" and not is_korean:
+        definition_question = f'What should you remember about "{draft.name}"?'
+        application_question = f'How would you use "{draft.name}" in a sentence?'
+    elif domain_hint == "exam" and not is_korean:
+        principle_question = f'What exam trap or key rule matters for "{draft.name}"?'
 
     cards = [
         {
@@ -252,6 +345,9 @@ async def _cleanup_partial_generation_data(source_id: UUID) -> None:
 
 async def _generate_cards_for_source(source: Source, job: Job) -> dict:
     raw_text = _normalize_text(source)
+    provided_title = bool(source.title and source.title.strip())
+    source_title = source.title.strip() if provided_title else infer_source_title(raw_text)
+    domain_hint = infer_domain_hint(raw_text)
     chunks = _chunk_text(raw_text)
     if not chunks:
         raise ValueError("Unable to split the source into meaningful chunks.")
@@ -261,7 +357,7 @@ async def _generate_cards_for_source(source: Source, job: Job) -> dict:
         content_length=len(raw_text),
     )
     prompt_bundle = prompt_manager.build_card_generation_prompt(
-        title=source.title,
+        title=source_title,
         raw_text=raw_text,
     )
 
@@ -270,6 +366,9 @@ async def _generate_cards_for_source(source: Source, job: Job) -> dict:
         job = await db.scalar(select(Job).where(Job.id == job.id))
         if source is None or job is None:
             raise ValueError("Source generation context could not be loaded.")
+        existing_metadata = source.metadata_ or {}
+        if not source.title:
+            source.title = source_title
 
         concept_rows: list[tuple[Concept, _ConceptDraft]] = []
         total_cards = 0
@@ -295,7 +394,11 @@ async def _generate_cards_for_source(source: Source, job: Job) -> dict:
             await db.flush()
             concept_rows.append((concept, draft))
 
-            for card_payload in _build_cards_for_concept(draft):
+            domain_subtype = _domain_subtype(domain_hint, draft)
+            for card_payload in _build_cards_for_concept(
+                draft,
+                domain_hint=domain_hint,
+            ):
                 if total_cards >= MAX_CARDS:
                     break
 
@@ -308,7 +411,12 @@ async def _generate_cards_for_source(source: Source, job: Job) -> dict:
                         question=card_payload["question"],
                         answer=card_payload["answer"],
                         difficulty=card_payload["difficulty"],
-                        tags={"keywords": draft.tags},
+                        tags={
+                            "keywords": draft.tags,
+                            "domain_hint": domain_hint,
+                            "domain_subtype": domain_subtype,
+                            "source_type": source.source_type,
+                        },
                     )
                 )
                 total_cards += 1
@@ -329,10 +437,14 @@ async def _generate_cards_for_source(source: Source, job: Job) -> dict:
         source.status = "done"
         source.error_message = None
         source.metadata_ = {
+            **existing_metadata,
             "chunk_count": len(chunks),
             "concept_count": len(concept_rows),
             "card_count": total_cards,
+            "domain_hint": domain_hint,
             "generator": HEURISTIC_MODEL_NAME,
+            "title_strategy": existing_metadata.get("title_strategy")
+            or ("provided" if provided_title else "heuristic"),
         }
         job.status = "completed"
         job.result_summary = source.metadata_

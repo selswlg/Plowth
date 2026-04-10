@@ -59,10 +59,10 @@ class SourceCreate(BaseModel):
     title: str | None = Field(None, max_length=500)
     source_type: str = Field(
         "text",
-        pattern="^(text|pdf|link)$",
+        pattern="^(text|csv|pdf|link)$",
         description=(
-            "Phase 2 runtime currently accepts only 'text'. "
-            "'pdf' and 'link' remain planned follow-up types."
+            "Supported source type contract. Text is handled by /sources; "
+            "CSV uses /sources/csv/*; PDF/link remain follow-up runtime paths."
         ),
     )
     raw_content: str | None = None
@@ -89,6 +89,23 @@ class SourceDetail(SourceResponse):
     url: str | None
     error_message: str | None
     metadata_: dict | None = Field(None, alias="metadata_")
+
+
+class CsvPreviewResponse(BaseModel):
+    columns: list[str]
+    sample_rows: list[dict[str, str]]
+    row_count: int
+
+
+class CsvImportResponse(BaseModel):
+    source_id: UUID
+    title: str | None
+    source_type: str
+    status: str
+    card_count: int
+    skipped_count: int
+    row_count: int
+    columns: list[str]
 
 
 # ─── Cards ────────────────────────────────────────────────────────────────────
@@ -118,6 +135,7 @@ class CardResponse(BaseModel):
     answer: str
     difficulty: int
     is_active: bool
+    tags: dict | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -150,6 +168,7 @@ class ReviewQueueCard(BaseModel):
     answer: str
     card_type: str
     difficulty: int
+    tags: dict | None = None
     state: str
     next_review_at: datetime | None
     reps: int
@@ -195,3 +214,54 @@ class WeakConcept(BaseModel):
     concept_name: str
     failure_count: int
     last_failed_at: datetime | None
+
+
+class InsightSnapshot(BaseModel):
+    overview: DailyInsight
+    weak_concepts: list[WeakConcept]
+    coach_title: str
+    coach_message: str
+    focus_topic: str | None = None
+
+
+class CognitiveUpdatePreviewRequest(BaseModel):
+    concept_name: str = Field(min_length=2, max_length=500)
+    description: str | None = Field(None, max_length=2000)
+    limit: int = Field(5, ge=1, le=10)
+
+
+class CognitiveUpdateCardCandidate(BaseModel):
+    card_id: UUID
+    question: str
+    answer_excerpt: str
+
+
+class CognitiveUpdateMatch(BaseModel):
+    concept_id: UUID
+    concept_name: str
+    similarity: float
+    suggested_action: str
+    cards: list[CognitiveUpdateCardCandidate]
+
+
+class CognitiveUpdatePreviewResponse(BaseModel):
+    matches: list[CognitiveUpdateMatch]
+
+
+class CognitiveUpdateApplyRequest(BaseModel):
+    card_id: UUID
+    new_evidence: str = Field(min_length=3, max_length=2000)
+    source_concept_name: str | None = Field(None, max_length=500)
+    action: str = Field("reinforce", pattern="^(reinforce|keep_separate|skip_duplicate)$")
+
+
+class TutorResponse(BaseModel):
+    card_id: UUID
+    request_type: str
+    title: str
+    content: str
+    bullets: list[str]
+    related_concepts: list[str]
+    cached: bool
+    generated_at: datetime
+    expires_at: datetime
