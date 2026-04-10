@@ -495,6 +495,7 @@ class StudyRepository {
   StudyRepository({Dio? dio}) : _dio = dio ?? _buildDio();
 
   static const _accessTokenKey = 'access_token';
+  static const _refreshTokenKey = 'refresh_token';
   final Dio _dio;
 
   Future<SourceGenerationResult> createTextSource({
@@ -895,13 +896,84 @@ class StudyRepository {
 
   Future<void> _authorize() async {
     final prefs = await SharedPreferences.getInstance();
-    final accessToken = prefs.getString(_accessTokenKey);
+    var accessToken = prefs.getString(_accessTokenKey);
     if (accessToken == null || accessToken.isEmpty) {
       throw const StudyException(
         'No authenticated session found on this device.',
       );
     }
+
+    if (_isJwtExpired(accessToken)) {
+      accessToken = await _refreshAccessToken(prefs);
+    }
+
     _dio.options.headers['Authorization'] = 'Bearer $accessToken';
+  }
+
+  Future<String> _refreshAccessToken(SharedPreferences prefs) async {
+    final refreshToken = prefs.getString(_refreshTokenKey);
+    if (refreshToken == null || refreshToken.isEmpty) {
+      await _clearStoredTokens(prefs);
+      throw const StudyException('Your session expired. Start a new session.');
+    }
+
+    try {
+      final response = await _buildDio().post<Map<String, dynamic>>(
+        '/auth/refresh',
+        data: {'refresh_token': refreshToken},
+      );
+      final payload = response.data;
+      final accessToken = payload?['access_token'] as String?;
+      final nextRefreshToken = payload?['refresh_token'] as String?;
+      if (accessToken == null ||
+          accessToken.isEmpty ||
+          nextRefreshToken == null ||
+          nextRefreshToken.isEmpty) {
+        throw const StudyException(
+          'The API returned an incomplete auth response.',
+        );
+      }
+
+      await prefs.setString(_accessTokenKey, accessToken);
+      await prefs.setString(_refreshTokenKey, nextRefreshToken);
+      return accessToken;
+    } on DioException {
+      await _clearStoredTokens(prefs);
+      throw const StudyException('Your session expired. Start a new session.');
+    }
+  }
+
+  Future<void> _clearStoredTokens(SharedPreferences prefs) async {
+    await prefs.remove(_accessTokenKey);
+    await prefs.remove(_refreshTokenKey);
+  }
+
+  bool _isJwtExpired(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) {
+        return true;
+      }
+      final payload = jsonDecode(
+        utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+      );
+      if (payload is! Map<String, dynamic>) {
+        return true;
+      }
+      final expiresAtSeconds = payload['exp'];
+      if (expiresAtSeconds is! num) {
+        return true;
+      }
+      final expiresAt = DateTime.fromMillisecondsSinceEpoch(
+        expiresAtSeconds.toInt() * 1000,
+        isUtc: true,
+      );
+      return DateTime.now().toUtc().isAfter(
+        expiresAt.subtract(const Duration(seconds: 30)),
+      );
+    } catch (_) {
+      return true;
+    }
   }
 
   static Dio _buildDio() {

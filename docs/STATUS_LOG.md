@@ -14,10 +14,10 @@
 
 ## Latest Snapshot
 
-**Updated:** 2026-04-10 KST  
+**Updated:** 2026-04-11 KST
 **Branch:** `main`  
 **Workspace:** `D:\REAL`  
-**State:** Phase 0/A/B/C/D/E/F/G/H completed for the capture redesign. CSV import, link ingest, text-based PDF ingest, domain metadata generation, domain-specific card editing, concept-level priority signals, and Cognitive Update preview/apply are implemented.
+**State:** Phase 0/A/B/C/D/E/F/G/H completed for the capture redesign. CSV import, link ingest, text-based PDF ingest, domain metadata generation, domain-specific card editing, concept-level priority signals, Cognitive Update preview/apply, token refresh before study API calls, vocabulary-list text capture, Review tab auto-refresh, and scheduler null-state hardening are implemented.
 
 ### Scope
 
@@ -44,7 +44,7 @@
 - Backend unit tests pass.
 - Flutter tests pass.
 - Flutter analyzer currently passes.
-- Docker containers for current project names were not running at the time of check.
+- Docker containers `plowth_postgres` and `plowth_redis` were healthy during the latest local check.
 
 ## Progress Tracker
 
@@ -68,6 +68,29 @@
 | Rebrand to Plowth | In Progress | App/package IDs mostly updated; DB/S3 names still use `real_*` defaults |
 
 ## Review Log
+
+### 2026-04-11 - Local Capture UX and Vocabulary Card Quality
+
+**Purpose:** Fix local testing issues found during Android emulator Text capture.
+
+**Completed:**
+
+- Confirmed `401 Invalid or expired token` was caused by an expired mobile access token, not missing LLM API configuration.
+- Added mobile access-token expiry detection and `/auth/refresh` usage before study API calls.
+- Removed the persistent Capture "Cards are being prepared" inline card for async text/link/pdf submissions.
+- Replaced the persistent preparation state with short SnackBar feedback after submission.
+- Added backend vocabulary-list detection for line-based `term : meaning` text input.
+- Vocabulary-list text now produces one definition card per row, with `domain_hint=language`, `domain_subtype=vocabulary`, and `input_pattern=vocabulary_list`.
+- Added regression coverage for the Chinese number vocabulary sample.
+- Review tab now refreshes when entered and after Capture submission, so stale empty queues do not remain behind the Refresh button.
+- Review scheduler now normalizes newly created `MemoryState` `None` values before calculating the next interval.
+- Added regression coverage for first-review scheduling with uninitialized memory state values.
+
+**Validation:**
+
+- `cd backend && .\venv\Scripts\python.exe -m unittest test_phase2_services.py` -> 26 tests passing
+- `cd mobile && flutter analyze` -> no issues found
+- `cd mobile && flutter test` -> 8 tests passing
 
 ### 2026-04-10 - Phase F Domain Editor Follow-up
 
@@ -298,6 +321,16 @@
 3. Decide whether `real_user`, `real_db`, and `real-uploads` should remain compatibility defaults or be renamed.
 
 ## Validation Log
+
+### 2026-04-11
+
+| Command | Result | Notes |
+|---|---:|---|
+| `docker ps --filter name=plowth --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"` | Pass | `plowth_postgres` and `plowth_redis` healthy |
+| `Invoke-RestMethod http://127.0.0.1:8000/health` | Fail | Backend server was not running during first local diagnosis |
+| `cd backend && .\venv\Scripts\python.exe -m unittest test_phase2_services.py` | Pass | 26 tests passed after vocabulary-list and scheduler null-state regressions |
+| `cd mobile && flutter analyze` | Pass | No issues after token refresh and Capture UX changes |
+| `cd mobile && flutter test` | Pass | 8 tests passing |
 
 ### 2026-04-10
 

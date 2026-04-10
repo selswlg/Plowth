@@ -32,8 +32,10 @@ from app.services.ai_orchestrator import CostController, ModelRouter, PromptMana
 HEURISTIC_MODEL_NAME = "heuristic-phase2-v1"
 MAX_CHUNKS = 6
 MAX_CARDS = 10
-TOKEN_PATTERN = re.compile(r"[A-Za-z0-9가-힣]{2,}")
+TOKEN_PATTERN = re.compile(r"[\w\u4e00-\u9fff]{1,}", re.UNICODE)
 SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?。！？])\s+|\n+")
+VOCABULARY_SEPARATOR_PATTERN = re.compile(r"\s*(?::|：|=|->|=>)\s*")
+VOCABULARY_BULLET_PATTERN = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
 settings = get_settings()
 model_router = ModelRouter(
     high_model=settings.AI_MODEL_HIGH,
@@ -49,6 +51,12 @@ class _ConceptDraft:
     description: str
     details: list[str]
     tags: list[str]
+
+
+@dataclass(frozen=True)
+class _VocabularyEntry:
+    term: str
+    meaning: str
 
 
 def _utcnow() -> datetime:
@@ -74,7 +82,9 @@ def _normalize_text(source: Source) -> str:
 
 
 def _split_sentences(text: str) -> list[str]:
-    sentences = [part.strip() for part in SENTENCE_SPLIT_PATTERN.split(text) if part.strip()]
+    sentences = [
+        part.strip() for part in SENTENCE_SPLIT_PATTERN.split(text) if part.strip()
+    ]
     return sentences or [text.strip()]
 
 
@@ -127,8 +137,55 @@ def _keyword_candidates(text: str) -> list[str]:
     return [token for token, _ in counts.most_common(6)]
 
 
+def _parse_vocabulary_entries(text: str) -> list[_VocabularyEntry]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) < 3:
+        return []
+
+    entries: list[_VocabularyEntry] = []
+    for line in lines:
+        cleaned = VOCABULARY_BULLET_PATTERN.sub("", line).strip()
+        match = VOCABULARY_SEPARATOR_PATTERN.search(cleaned)
+        if match is None:
+            continue
+
+        term = cleaned[: match.start()].strip()
+        meaning = cleaned[match.end() :].strip()
+        if not term or not meaning:
+            continue
+        if len(term) > 80 or len(meaning) > 240:
+            continue
+
+        entries.append(_VocabularyEntry(term=term, meaning=meaning))
+
+    minimum_matches = max(3, math.ceil(len(lines) * 0.6))
+    if len(entries) < minimum_matches:
+        return []
+
+    return entries[:MAX_CARDS]
+
+
+def build_vocabulary_card_payloads(text: str) -> list[dict]:
+    entries = _parse_vocabulary_entries(text)
+    return [
+        {
+            "term": entry.term,
+            "meaning": entry.meaning,
+            "card_type": "definition",
+            "question": f'What does "{entry.term}" mean?',
+            "answer": entry.meaning,
+            "difficulty": 2,
+            "tags": _keyword_candidates(f"{entry.term} {entry.meaning}"),
+        }
+        for entry in entries
+    ]
+
+
 def infer_domain_hint(text: str) -> str:
     """Classify material into a lightweight domain without schema changes."""
+    if _parse_vocabulary_entries(text):
+        return "language"
+
     lower = text.lower()
     code_markers = (
         "def ",
@@ -201,6 +258,9 @@ def infer_source_title(raw_text: str) -> str:
     if not text:
         return "Captured material"
 
+    if _parse_vocabulary_entries(raw_text):
+        return "Vocabulary list"
+
     first_sentence = _split_sentences(text)[0]
     if ":" in first_sentence:
         head, _, _ = first_sentence.partition(":")
@@ -268,7 +328,9 @@ def _build_cards_for_concept(
     else:
         definition_question = f'What is the core idea behind "{draft.name}"?'
         principle_question = f'Why does "{draft.name}" matter in this material?'
-        application_question = f'What example or application best illustrates "{draft.name}"?'
+        application_question = (
+            f'What example or application best illustrates "{draft.name}"?'
+        )
 
     if domain_hint == "code" and not is_korean:
         definition_question = f'What does "{draft.name}" do in this code context?'
@@ -345,10 +407,17 @@ async def _cleanup_partial_generation_data(source_id: UUID) -> None:
 
 async def _generate_cards_for_source(source: Source, job: Job) -> dict:
     raw_text = _normalize_text(source)
+    vocabulary_entries = _parse_vocabulary_entries(raw_text)
     provided_title = bool(source.title and source.title.strip())
-    source_title = source.title.strip() if provided_title else infer_source_title(raw_text)
-    domain_hint = infer_domain_hint(raw_text)
-    chunks = _chunk_text(raw_text)
+    source_title = (
+        source.title.strip() if provided_title else infer_source_title(raw_text)
+    )
+    domain_hint = "language" if vocabulary_entries else infer_domain_hint(raw_text)
+    chunks = (
+        [f"{entry.term}: {entry.meaning}" for entry in vocabulary_entries]
+        if vocabulary_entries
+        else _chunk_text(raw_text)
+    )
     if not chunks:
         raise ValueError("Unable to split the source into meaningful chunks.")
 
@@ -383,24 +452,60 @@ async def _generate_cards_for_source(source: Source, job: Job) -> dict:
             db.add(chunk)
             await db.flush()
 
-            draft = _build_concept_draft(chunk_text, chunk_index + 1)
+            if vocabulary_entries:
+                entry = vocabulary_entries[chunk_index]
+                draft = _ConceptDraft(
+                    name=entry.term,
+                    description=entry.meaning,
+                    details=[],
+                    tags=_keyword_candidates(chunk_text),
+                )
+                concept_category = "vocabulary"
+            else:
+                draft = _build_concept_draft(chunk_text, chunk_index + 1)
+                concept_category = "generated"
+
             concept = Concept(
                 chunk_id=chunk.id,
                 name=draft.name,
                 description=draft.description,
-                category="generated",
+                category=concept_category,
             )
             db.add(concept)
             await db.flush()
             concept_rows.append((concept, draft))
 
-            domain_subtype = _domain_subtype(domain_hint, draft)
-            for card_payload in _build_cards_for_concept(
-                draft,
-                domain_hint=domain_hint,
-            ):
+            domain_subtype = (
+                "vocabulary"
+                if vocabulary_entries
+                else _domain_subtype(domain_hint, draft)
+            )
+            card_payloads = (
+                [
+                    {
+                        "card_type": "definition",
+                        "question": f'What does "{draft.name}" mean?',
+                        "answer": draft.description,
+                        "difficulty": 2,
+                    }
+                ]
+                if vocabulary_entries
+                else _build_cards_for_concept(draft, domain_hint=domain_hint)
+            )
+            for card_payload in card_payloads:
                 if total_cards >= MAX_CARDS:
                     break
+
+                tags = {
+                    "keywords": draft.tags,
+                    "domain_hint": domain_hint,
+                    "domain_subtype": domain_subtype,
+                    "source_type": source.source_type,
+                }
+                if vocabulary_entries:
+                    tags["domain_fields"] = {
+                        "translation_hint": draft.description,
+                    }
 
                 db.add(
                     Card(
@@ -411,12 +516,7 @@ async def _generate_cards_for_source(source: Source, job: Job) -> dict:
                         question=card_payload["question"],
                         answer=card_payload["answer"],
                         difficulty=card_payload["difficulty"],
-                        tags={
-                            "keywords": draft.tags,
-                            "domain_hint": domain_hint,
-                            "domain_subtype": domain_subtype,
-                            "source_type": source.source_type,
-                        },
+                        tags=tags,
                     )
                 )
                 total_cards += 1
@@ -443,6 +543,9 @@ async def _generate_cards_for_source(source: Source, job: Job) -> dict:
             "card_count": total_cards,
             "domain_hint": domain_hint,
             "generator": HEURISTIC_MODEL_NAME,
+            "input_pattern": (
+                "vocabulary_list" if vocabulary_entries else "concept_notes"
+            ),
             "title_strategy": existing_metadata.get("title_strategy")
             or ("provided" if provided_title else "heuristic"),
         }

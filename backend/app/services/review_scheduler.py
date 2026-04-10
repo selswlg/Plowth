@@ -34,11 +34,11 @@ def _clamp(value: float, minimum: float, maximum: float) -> float:
 
 def calculate_schedule(
     *,
-    reps: int,
-    lapses: int,
-    state: str,
-    stability: float,
-    difficulty: float,
+    reps: int | None,
+    lapses: int | None,
+    state: str | None,
+    stability: float | None,
+    difficulty: float | None,
     last_review_at: datetime | None,
     rating: str,
     response_time_ms: int | None,
@@ -46,8 +46,19 @@ def calculate_schedule(
     now: datetime | None = None,
 ) -> ScheduleUpdate:
     now = now or _utcnow()
-    previous_stability = stability if stability > 0 else max(0.25, seed_difficulty * 0.35)
-    previous_difficulty = difficulty if difficulty > 0 else float(seed_difficulty + 3)
+    previous_reps = reps or 0
+    previous_lapses = lapses or 0
+    previous_state = state or "new"
+    previous_stability = (
+        stability
+        if stability is not None and stability > 0
+        else max(0.25, seed_difficulty * 0.35)
+    )
+    previous_difficulty = (
+        difficulty
+        if difficulty is not None and difficulty > 0
+        else float(seed_difficulty + 3)
+    )
 
     elapsed_days = 0.0
     if last_review_at is not None:
@@ -79,13 +90,13 @@ def calculate_schedule(
         difficulty_delta += 0.2
 
     next_difficulty = _clamp(previous_difficulty + difficulty_delta, 1.0, 10.0)
-    next_reps = reps + 1
-    next_lapses = lapses + (1 if rating == "again" else 0)
+    next_reps = previous_reps + 1
+    next_lapses = previous_lapses + (1 if rating == "again" else 0)
 
     if rating == "again":
         next_stability = _clamp(previous_stability * 0.35 * response_factor, 0.08, 3.0)
-        interval = timedelta(minutes=10 if reps == 0 else 30)
-        next_state = "relearning" if reps > 0 else "learning"
+        interval = timedelta(minutes=10 if previous_reps == 0 else 30)
+        next_state = "relearning" if previous_reps > 0 else "learning"
     else:
         growth = {
             "hard": 0.9,
@@ -95,12 +106,16 @@ def calculate_schedule(
         recall_factor = max(0.7, 1.3 - (1.0 - retrievability))
         difficulty_factor = max(0.65, 1.2 - next_difficulty / 12)
         next_stability = _clamp(
-            previous_stability * growth * recall_factor * difficulty_factor * response_factor,
+            previous_stability
+            * growth
+            * recall_factor
+            * difficulty_factor
+            * response_factor,
             0.2,
             365.0,
         )
 
-        if reps == 0:
+        if previous_reps == 0:
             interval = {
                 "hard": timedelta(hours=8),
                 "good": timedelta(days=1),
@@ -115,7 +130,7 @@ def calculate_schedule(
             interval = timedelta(days=interval_days)
 
         next_state = "learning" if next_reps < 2 else "review"
-        if state == "relearning" and rating in {"good", "easy"}:
+        if previous_state == "relearning" and rating in {"good", "easy"}:
             next_state = "review"
 
     return ScheduleUpdate(

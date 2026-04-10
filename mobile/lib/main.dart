@@ -159,7 +159,7 @@ class _MainShellState extends State<MainShell> {
   List<Widget> get _screens => [
     HomeScreen(
       learningGoalLabel: widget.learningGoalLabel,
-      onStartReview: () => _setTab(1),
+      onStartReview: () => _setTab(1, refreshReview: true),
       onAddMaterial: () => _setTab(2),
       refreshSeed: _homeRefreshSeed,
     ),
@@ -167,7 +167,7 @@ class _MainShellState extends State<MainShell> {
       refreshSeed: _reviewRefreshSeed,
       onCaptureRequested: () => _setTab(2),
     ),
-    CaptureScreen(onCaptureSubmitted: () => _setTab(0)),
+    CaptureScreen(onCaptureSubmitted: () => _setTab(0, refreshReview: true)),
     InsightScreen(refreshSeed: _insightRefreshSeed),
     const _PlaceholderScreen(
       title: 'Profile',
@@ -179,7 +179,7 @@ class _MainShellState extends State<MainShell> {
   void _setTab(int index, {bool refreshReview = false}) {
     setState(() {
       _currentIndex = index;
-      if (refreshReview) {
+      if (refreshReview || index == 1) {
         _reviewRefreshSeed += 1;
       }
       if (index == 0) {

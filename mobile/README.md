@@ -20,9 +20,9 @@ flutter run --dart-define=PLOWTH_API_BASE_URL=http://127.0.0.1:8000/api/v1
 - onboarding flow
 - guest session creation through `POST /auth/guest`
 - local persistence for onboarding state, device id, and auth tokens
-## 2026-04-09 Update
+## 2026-04-11 Update
 
-- Current flow includes onboarding, guest session creation, home snapshot, titleless text capture, CSV file import with column mapping, URL capture, PDF upload, domain-aware review labels, domain-specific card editing from Home, Cognitive Update in Insight, home generation status, review flow, and local persistence.
+- Current flow includes onboarding, guest session creation, access-token refresh before study API calls, home snapshot, titleless text capture, CSV file import with column mapping, URL capture, PDF upload, transient capture status feedback, Review tab auto-refresh, domain-aware review labels, domain-specific card editing from Home, Cognitive Update in Insight, home generation status, review flow, and local persistence.
 - Phase 3 now starts with the Insight snapshot tab: daily metrics, weak concepts, and coaching guidance.
 - Local checks completed:
   - `flutter test` -> 8 tests passing

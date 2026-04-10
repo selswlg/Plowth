@@ -4,7 +4,11 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from app.services.ai_orchestrator import CostController, ModelRouter, PromptManager
-from app.services.card_generation import infer_domain_hint, infer_source_title
+from app.services.card_generation import (
+    build_vocabulary_card_payloads,
+    infer_domain_hint,
+    infer_source_title,
+)
 from app.services.csv_import import (
     CsvImportError,
     build_csv_card_drafts,
@@ -74,6 +78,31 @@ class OrchestratorTests(unittest.TestCase):
 
         self.assertEqual(domain, "code")
 
+    def test_vocabulary_list_builds_one_card_per_entry(self):
+        text = (
+            "一 (yī) : 1\n"
+            "二 (èr) : 2\n"
+            "三 (sān) : 3\n"
+            "四 (sì) : 4\n"
+            "五 (wǔ) : 5\n"
+            "十 (shí) : 10\n"
+            "百 (bǎi) : 100\n"
+            "千 (qiān) : 1,000\n"
+            "万 (wàn) : 10,000\n"
+            "亿 (yì) : 억"
+        )
+
+        cards = build_vocabulary_card_payloads(text)
+
+        self.assertEqual(len(cards), 10)
+        self.assertEqual(cards[0]["question"], 'What does "一 (yī)" mean?')
+        self.assertEqual(cards[0]["answer"], "1")
+        self.assertEqual(cards[2]["question"], 'What does "三 (sān)" mean?')
+        self.assertEqual(cards[2]["answer"], "3")
+        self.assertEqual(cards[-1]["answer"], "억")
+        self.assertEqual(infer_domain_hint(text), "language")
+        self.assertEqual(infer_source_title(text), "Vocabulary list")
+
 
 class ReviewSchedulerTests(unittest.TestCase):
     def test_again_creates_relearning_state_and_lapse(self):
@@ -124,6 +153,27 @@ class ReviewSchedulerTests(unittest.TestCase):
 
         self.assertGreater(easy.next_review_at, good.next_review_at)
         self.assertGreaterEqual(easy.stability, good.stability)
+
+    def test_new_memory_state_none_values_are_normalized(self):
+        now = datetime.now(timezone.utc)
+        update = calculate_schedule(
+            reps=None,
+            lapses=None,
+            state=None,
+            stability=None,
+            difficulty=None,
+            last_review_at=None,
+            rating="good",
+            response_time_ms=2200,
+            seed_difficulty=2,
+            now=now,
+        )
+
+        self.assertEqual(update.reps, 1)
+        self.assertEqual(update.lapses, 0)
+        self.assertEqual(update.state, "learning")
+        self.assertGreater(update.stability, 0)
+        self.assertGreater(update.difficulty, 0)
 
     def test_daily_queue_priority_boosts_weak_concepts(self):
         now = datetime.now(timezone.utc)

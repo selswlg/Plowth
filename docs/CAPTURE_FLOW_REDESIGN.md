@@ -1510,6 +1510,8 @@ Z5. [ ] live LLM-only title/domain extraction
 
 | 날짜 | 내용 |
 |------|------|
+| 2026-04-11 | Review tab refreshes on entry and after Capture; scheduler now handles uninitialized MemoryState values on first review. |
+| 2026-04-11 | Text capture UX adjusted to transient preparation feedback; vocabulary-list text now creates one card per `term : meaning` row. |
 | 2026-04-10 | Phase F follow-up completed with Home card editor entry, domain-specific edit fields, and Card.tags.domain_fields persistence. |
 | 2026-04-10 | Phase H Cognitive Update implemented with lexical preview/apply API, Card.tags enrichment history, and Insight UI. |
 | 2026-04-10 | Phase G concept tracking completed using existing concept/review/mistake models and weakness priority boost. |

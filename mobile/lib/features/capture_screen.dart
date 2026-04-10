@@ -26,7 +26,6 @@ class _CaptureScreenState extends State<CaptureScreen> {
   bool _isSubmitting = false;
   bool _isPreviewing = false;
   String? _errorMessage;
-  SourceGenerationResult? _latestSubmission;
   CsvImportResult? _latestCsvImport;
 
   String? _csvFileName;
@@ -62,7 +61,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
     });
 
     try {
-      final result = await _repository.createTextSource(rawContent: content);
+      await _repository.createTextSource(rawContent: content);
       if (!mounted) {
         return;
       }
@@ -70,14 +69,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
       _contentController.clear();
       setState(() {
         _isSubmitting = false;
-        _latestSubmission = result;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Material received. Track progress from Home.'),
-        ),
-      );
+      _showTransientStatus('Cards are being prepared.');
       widget.onCaptureSubmitted();
     } on StudyException catch (error) {
       if (!mounted) {
@@ -110,7 +104,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
     });
 
     try {
-      final result = await _repository.createLinkSource(url: url);
+      await _repository.createLinkSource(url: url);
       if (!mounted) {
         return;
       }
@@ -118,14 +112,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
       _urlController.clear();
       setState(() {
         _isSubmitting = false;
-        _latestSubmission = result;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Link received. Track progress from Home.'),
-        ),
-      );
+      _showTransientStatus('Link cards are being prepared.');
       widget.onCaptureSubmitted();
     } on StudyException catch (error) {
       if (!mounted) {
@@ -142,7 +131,6 @@ class _CaptureScreenState extends State<CaptureScreen> {
     setState(() {
       _isPreviewing = true;
       _errorMessage = null;
-      _latestSubmission = null;
       _latestCsvImport = null;
     });
 
@@ -177,7 +165,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
         _isSubmitting = true;
       });
 
-      final upload = await _repository.createPdfSource(
+      await _repository.createPdfSource(
         fileName: pickedFile.name,
         bytes: bytes,
       );
@@ -187,14 +175,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
       setState(() {
         _isSubmitting = false;
-        _latestSubmission = upload;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('PDF received. Track progress from Home.'),
-        ),
-      );
+      _showTransientStatus('PDF cards are being prepared.');
       widget.onCaptureSubmitted();
     } on StudyException catch (error) {
       if (!mounted) {
@@ -221,7 +204,6 @@ class _CaptureScreenState extends State<CaptureScreen> {
     setState(() {
       _isPreviewing = true;
       _errorMessage = null;
-      _latestSubmission = null;
       _latestCsvImport = null;
     });
 
@@ -391,6 +373,14 @@ class _CaptureScreenState extends State<CaptureScreen> {
     return 0;
   }
 
+  void _showTransientStatus(String message) {
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+      );
+  }
+
   void _setMode(_CaptureMode mode) {
     if (_isBusy) {
       return;
@@ -487,16 +477,6 @@ class _CaptureScreenState extends State<CaptureScreen> {
                   message: _errorMessage!,
                 ),
               ),
-            ),
-          if (_latestSubmission != null)
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.lg,
-                AppSpacing.lg,
-                AppSpacing.lg,
-                0,
-              ),
-              sliver: const SliverToBoxAdapter(child: _QueuedMaterialCard()),
             ),
           if (_latestCsvImport != null)
             SliverPadding(
@@ -905,49 +885,6 @@ class _CsvPreviewTable extends StatelessWidget {
       return value;
     }
     return '${value.substring(0, 45)}...';
-  }
-}
-
-class _QueuedMaterialCard extends StatelessWidget {
-  const _QueuedMaterialCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: AppColors.borderLight),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Cards are being prepared',
-                  style: AppTypography.titleMedium,
-                ),
-                const SizedBox(height: AppSpacing.xs),
-                Text(
-                  'You can leave this screen. Home will show the latest progress.',
-                  style: AppTypography.bodyMedium,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
 
