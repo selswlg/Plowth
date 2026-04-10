@@ -27,7 +27,7 @@ from app.services.link_ingest import (
 from app.services.pdf_ingest import PdfIngestError, extract_text_from_pdf
 from app.services.review_scheduler import calculate_schedule
 from app.services.tutor_service import TutorContext, build_tutor_payload
-from app.schemas import DailyInsight, WeakConcept
+from app.schemas import CardUpdate, DailyInsight, WeakConcept
 
 
 class OrchestratorTests(unittest.TestCase):
@@ -240,6 +240,26 @@ class CognitiveUpdateTests(unittest.TestCase):
         self.assertEqual(updated["enrichment_history"][-1]["index"], 10)
 
 
+class CardSchemaTests(unittest.TestCase):
+    def test_card_update_accepts_domain_tags(self):
+        update = CardUpdate(
+            question="What should be checked before an exam?",
+            answer="Identify common traps and review the memory cue.",
+            tags={
+                "domain_hint": "exam",
+                "domain_fields": {"exam_trap": "Confusing similar terms"},
+            },
+        )
+
+        payload = update.model_dump(exclude_unset=True)
+
+        self.assertEqual(payload["tags"]["domain_hint"], "exam")
+        self.assertEqual(
+            payload["tags"]["domain_fields"]["exam_trap"],
+            "Confusing similar terms",
+        )
+
+
 class PdfIngestTests(unittest.TestCase):
     def test_extract_text_from_pdf_reads_selectable_text(self):
         import fitz
@@ -341,7 +361,10 @@ class TutorServiceTests(unittest.TestCase):
             concept_name="Cellular respiration",
             concept_description="A process that releases stored chemical energy for the cell.",
             related_concepts=["ATP", "Mitochondria", "Metabolism"],
-            sibling_questions=["How does ATP store energy?", "Where does glycolysis happen?"],
+            sibling_questions=[
+                "How does ATP store energy?",
+                "Where does glycolysis happen?",
+            ],
         )
 
     def test_build_explain_payload_includes_source_and_concept(self):
@@ -369,7 +392,10 @@ class TutorServiceTests(unittest.TestCase):
             concept_name="Osmosis",
             concept_description=None,
             related_concepts=[],
-            sibling_questions=["How is diffusion different?", "What is active transport?"],
+            sibling_questions=[
+                "How is diffusion different?",
+                "What is active transport?",
+            ],
         )
 
         payload = build_tutor_payload(context=context, request_type="related")

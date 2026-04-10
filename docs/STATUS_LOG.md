@@ -17,7 +17,7 @@
 **Updated:** 2026-04-10 KST  
 **Branch:** `main`  
 **Workspace:** `D:\REAL`  
-**State:** Phase 0/A/B/C/D/E/G/H completed and Phase F mostly completed for the capture redesign. CSV import, link ingest, text-based PDF ingest, domain metadata generation, concept-level priority signals, and Cognitive Update preview/apply are implemented; local uncommitted changes remain broad.
+**State:** Phase 0/A/B/C/D/E/F/G/H completed for the capture redesign. CSV import, link ingest, text-based PDF ingest, domain metadata generation, domain-specific card editing, concept-level priority signals, and Cognitive Update preview/apply are implemented.
 
 ### Scope
 
@@ -57,7 +57,7 @@
 | Phase C CSV Import | Done | CSV preview/import API, mobile file picker + mapping UI, backend/mobile parsing tests |
 | Phase D Link Ingest | Done | URL input UI, backend validation/fetch/extract, JobRunner handoff, service tests |
 | Phase E PDF Ingest | Done | PDF upload API, PyMuPDF extraction, mobile PDF picker, extraction tests |
-| Phase F Domain-Adaptive Cards | Mostly Done | Heuristic domain_hint, Source.metadata_, Card.tags, review labels; domain-specific edit UI deferred |
+| Phase F Domain-Adaptive Cards | Done | Heuristic domain_hint, Source.metadata_, Card.tags, review labels, and domain-specific card editor |
 | Phase G Concept Tracking | Done | Existing concept review aggregation, weak concepts, Tutor concept context, and mistake priority boost |
 | Phase H Cognitive Update | Done | Lexical matching preview/apply API, Card.tags enrichment history, Insight UI; pgvector deferred |
 | Insight Snapshot | In Progress | API and mobile tab added; richer analytics still pending |
@@ -68,6 +68,26 @@
 | Rebrand to Plowth | In Progress | App/package IDs mostly updated; DB/S3 names still use `real_*` defaults |
 
 ## Review Log
+
+### 2026-04-10 - Phase F Domain Editor Follow-up
+
+**Purpose:** Complete the deferred Phase F edit path using existing `Card.tags` metadata.
+
+**Completed:**
+
+- Added backend `CardUpdate.tags` support so domain editor metadata can be saved without a migration.
+- Added mobile `CardEditorScreen` with a generated-card edit entry from Home when generation is done.
+- Added domain-aware editor fields for `exam`, `language`, `code`, and `general` cards.
+- Editor preserves existing tags and writes domain-specific notes under `Card.tags.domain_fields`.
+- Added mobile `StudyCard` metadata helpers and model coverage for domain editor fields.
+- Added backend schema coverage for updating domain tags.
+
+**Validation:**
+
+- `cd backend && .\venv\Scripts\python.exe -m unittest test_phase2_services.py` -> 24 tests passing
+- `cd backend && .\venv\Scripts\python.exe -c "from app.main import app; print(len(app.routes))"` -> app loads with 35 routes
+- `cd mobile && flutter analyze` -> no issues found
+- `cd mobile && flutter test` -> 8 tests passing
 
 ### 2026-04-10 - Phase H Cognitive Update
 
@@ -283,11 +303,11 @@
 
 | Command | Result | Notes |
 |---|---:|---|
-| `cd backend && .\venv\Scripts\python.exe -m unittest test_phase2_services.py` | Pass | 23 tests passed after Phase H Cognitive Update tests |
-| `cd backend && .\venv\Scripts\python.exe -c "from app.main import app; print(len(app.routes))"` | Pass | FastAPI app loaded with 35 routes after Cognitive Update endpoints |
-| `cd mobile && flutter test` | Pass | 7 tests passed after Cognitive Update model parsing test |
-| `cd mobile && flutter test test\study_repository_tutor_models_test.dart` | Pass | 5 model parsing tests passed |
-| `cd mobile && flutter analyze` | Pass | No issues after Phase H |
+| `cd backend && .\venv\Scripts\python.exe -m unittest test_phase2_services.py` | Pass | 24 tests passed after Phase F editor schema coverage |
+| `cd backend && .\venv\Scripts\python.exe -c "from app.main import app; print(len(app.routes))"` | Pass | FastAPI app loaded with 35 routes |
+| `cd mobile && flutter test` | Pass | 8 tests passed after domain editor metadata parsing test |
+| `cd mobile && flutter test test\study_repository_tutor_models_test.dart` | Pass | 6 model parsing tests passed |
+| `cd mobile && flutter analyze` | Pass | No issues after Phase F editor follow-up |
 | `git diff --check` | Pass | No whitespace errors; CRLF warnings only |
 | `docker ps --filter name=plowth --filter name=real` | Pass | No matching running containers |
 
@@ -299,8 +319,7 @@
 
 ### P1 - Documentation Accuracy
 
-- Dedicated generated-card edit entry after Home completion.
-- Clarify the post-Phase A mobile flow in README/HANDOFF if needed.
+- Keep README/HANDOFF validation counts current after each implementation slice.
 
 ### P1 - Rebrand Consistency
 

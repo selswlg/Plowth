@@ -1370,9 +1370,10 @@ F3. [x] Card.tags에 domain_subtype/extra metadata 저장
 F4. [x] 도메인별 card generation branch 추가
        - 기존 schema에 들어갈 수 있는 card_type으로 normalize
 
-F5. [~] 도메인별 review/edit UI는 metadata 기반으로 점진 적용
+F5. [x] 도메인별 review/edit UI는 metadata 기반으로 점진 적용
        - review label에 domain_hint 노출
-       - edit UI의 도메인별 세부 편집은 후속 작업
+       - Home 생성 완료 상태에서 카드 편집 진입
+       - edit UI는 Card.tags.domain_fields에 도메인별 보조 필드 저장
 
 F6. [x] 실제 사용 후 `Card.extra`, `Source.domain_hint` 컬럼 migration 여부 결정
        - 현재 결정: migration 없이 Source.metadata_와 Card.tags 사용
@@ -1509,6 +1510,7 @@ Z5. [ ] live LLM-only title/domain extraction
 
 | 날짜 | 내용 |
 |------|------|
+| 2026-04-10 | Phase F follow-up completed with Home card editor entry, domain-specific edit fields, and Card.tags.domain_fields persistence. |
 | 2026-04-10 | Phase H Cognitive Update implemented with lexical preview/apply API, Card.tags enrichment history, and Insight UI. |
 | 2026-04-10 | Phase G concept tracking completed using existing concept/review/mistake models and weakness priority boost. |
 | 2026-04-10 | Phase F domain-adaptive cards implemented with heuristic domain_hint, Card.tags metadata, and review labels. |

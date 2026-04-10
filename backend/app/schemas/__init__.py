@@ -9,6 +9,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 
+
 class UserRegister(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
@@ -54,6 +55,7 @@ class UserResponse(BaseModel):
 
 
 # ─── Sources ──────────────────────────────────────────────────────────────────
+
 
 class SourceCreate(BaseModel):
     title: str | None = Field(None, max_length=500)
@@ -110,10 +112,13 @@ class CsvImportResponse(BaseModel):
 
 # ─── Cards ────────────────────────────────────────────────────────────────────
 
+
 class CardCreate(BaseModel):
     source_id: UUID
     concept_id: UUID | None = None
-    card_type: str = Field("definition", pattern="^(definition|principle|comparison|application)$")
+    card_type: str = Field(
+        "definition", pattern="^(definition|principle|comparison|application)$"
+    )
     question: str = Field(min_length=5, max_length=1000)
     answer: str = Field(min_length=3, max_length=2000)
     difficulty: int = Field(3, ge=1, le=5)
@@ -124,6 +129,7 @@ class CardUpdate(BaseModel):
     answer: str | None = Field(None, min_length=3, max_length=2000)
     difficulty: int | None = Field(None, ge=1, le=5)
     is_active: bool | None = None
+    tags: dict | None = None
 
 
 class CardResponse(BaseModel):
@@ -142,6 +148,7 @@ class CardResponse(BaseModel):
 
 
 # ─── Reviews ──────────────────────────────────────────────────────────────────
+
 
 class ReviewCreate(BaseModel):
     card_id: UUID
@@ -187,6 +194,7 @@ class ReviewSessionSummary(BaseModel):
 
 # ─── Jobs ─────────────────────────────────────────────────────────────────────
 
+
 class JobResponse(BaseModel):
     id: UUID
     job_type: str
@@ -201,6 +209,7 @@ class JobResponse(BaseModel):
 
 
 # ─── Insights ─────────────────────────────────────────────────────────────────
+
 
 class DailyInsight(BaseModel):
     total_due_today: int
@@ -252,7 +261,9 @@ class CognitiveUpdateApplyRequest(BaseModel):
     card_id: UUID
     new_evidence: str = Field(min_length=3, max_length=2000)
     source_concept_name: str | None = Field(None, max_length=500)
-    action: str = Field("reinforce", pattern="^(reinforce|keep_separate|skip_duplicate)$")
+    action: str = Field(
+        "reinforce", pattern="^(reinforce|keep_separate|skip_duplicate)$"
+    )
 
 
 class TutorResponse(BaseModel):

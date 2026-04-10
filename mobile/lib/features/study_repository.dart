@@ -180,6 +180,20 @@ class StudyCard {
   final bool isActive;
   final Map<String, dynamic>? tags;
 
+  String get domainHint => tags?['domain_hint']?.toString() ?? 'general';
+
+  String? get domainSubtype => tags?['domain_subtype']?.toString();
+
+  Map<String, String> get domainFields {
+    final rawFields = tags?['domain_fields'];
+    if (rawFields is! Map) {
+      return const <String, String>{};
+    }
+    return rawFields.map(
+      (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+    );
+  }
+
   factory StudyCard.fromJson(Map<String, dynamic> json) {
     return StudyCard(
       id: json['id'] as String,
@@ -704,6 +718,7 @@ class StudyRepository {
     required String question,
     required String answer,
     required int difficulty,
+    Map<String, dynamic>? tags,
   }) async {
     await _authorize();
     try {
@@ -713,6 +728,7 @@ class StudyRepository {
           'question': question.trim(),
           'answer': answer.trim(),
           'difficulty': difficulty,
+          if (tags != null) 'tags': tags,
         },
       );
       final payload = response.data;

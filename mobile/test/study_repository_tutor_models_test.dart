@@ -66,6 +66,27 @@ void main() {
   });
 
   group('Card metadata models', () {
+    test('StudyCard exposes domain editor metadata', () {
+      final card = StudyCard.fromJson({
+        'id': 'card-1',
+        'source_id': 'source-1',
+        'question': 'What is an exam trap?',
+        'answer': 'A distractor that looks correct.',
+        'card_type': 'definition',
+        'difficulty': 4,
+        'is_active': true,
+        'tags': {
+          'domain_hint': 'exam',
+          'domain_subtype': 'trap',
+          'domain_fields': {'exam_trap': 'Confusing absolute wording'},
+        },
+      });
+
+      expect(card.domainHint, 'exam');
+      expect(card.domainSubtype, 'trap');
+      expect(card.domainFields['exam_trap'], 'Confusing absolute wording');
+    });
+
     test('ReviewQueueItem parses domain tags', () {
       final item = ReviewQueueItem.fromJson({
         'id': 'card-1',

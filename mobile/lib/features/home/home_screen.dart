@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/theme/app_theme.dart';
+import '../card_editor_screen.dart';
 import '../study_repository.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -98,6 +99,19 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _openCardEditor(_GenerationSnapshot generation) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (context) => CardEditorScreen(
+              sourceId: generation.source?.id,
+              sourceTitle: generation.source?.title,
+            ),
+      ),
+    );
+    _refreshSnapshot();
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -193,6 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     onRefresh: _refreshSnapshot,
                     onStartReview: widget.onStartReview,
                     onAddMaterial: widget.onAddMaterial,
+                    onEditCards: () => _openCardEditor(generation),
                     onRetry: () => _retryGeneration(generation.job.id),
                   );
                 },
@@ -298,6 +313,7 @@ class _GenerationStatusCard extends StatelessWidget {
     required this.onRefresh,
     required this.onStartReview,
     required this.onAddMaterial,
+    required this.onEditCards,
     required this.onRetry,
   });
 
@@ -305,6 +321,7 @@ class _GenerationStatusCard extends StatelessWidget {
   final VoidCallback onRefresh;
   final VoidCallback onStartReview;
   final VoidCallback onAddMaterial;
+  final VoidCallback onEditCards;
   final VoidCallback onRetry;
 
   @override
@@ -352,6 +369,11 @@ class _GenerationStatusCard extends StatelessWidget {
                 ElevatedButton(
                   onPressed: onStartReview,
                   child: const Text('Start Review'),
+                ),
+              if (isDone)
+                OutlinedButton(
+                  onPressed: onEditCards,
+                  child: const Text('Edit Cards'),
                 ),
               if (isFailed)
                 ElevatedButton(

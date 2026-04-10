@@ -90,10 +90,10 @@ flutter run
 ## 2026-04-10 Update
 
 - Roadmap status: Phase 1 and Phase 2 are implemented in code, and the first Phase 3 Intelligence slice is now landed.
-- Backend currently covers auth, text-source ingest, CSV preview/import, link ingest, text-based PDF ingest, domain-tagged card generation, card CRUD, review queue/submission, today's review summary, Cognitive Update preview/apply, the Insight snapshot API with mistake/profile tracking, and cached Tutor endpoints for `explain` / `example` / `related`.
-- Mobile currently covers onboarding, guest session bootstrap, home snapshot, titleless text capture, CSV file import with column mapping, URL capture, PDF upload, domain-aware review labels, Cognitive Update from the Insight tab, home generation status, review flow, local persistence, the Insight tab, and Tutor actions in the review flow.
+- Backend currently covers auth, text-source ingest, CSV preview/import, link ingest, text-based PDF ingest, domain-tagged card generation/edit metadata, card CRUD, review queue/submission, today's review summary, Cognitive Update preview/apply, the Insight snapshot API with mistake/profile tracking, and cached Tutor endpoints for `explain` / `example` / `related`.
+- Mobile currently covers onboarding, guest session bootstrap, home snapshot, titleless text capture, CSV file import with column mapping, URL capture, PDF upload, domain-aware review labels, domain-specific card editing from Home, Cognitive Update from the Insight tab, home generation status, review flow, local persistence, the Insight tab, and Tutor actions in the review flow.
 - Local validation completed:
-  - `cd backend && python -m unittest test_phase2_services.py` -> 23 tests passing
-  - `cd mobile && flutter test` -> 7 tests passing
-  - `cd mobile && flutter analyze` -> no issues found after removing the stale legacy review screen
+  - `cd backend && python -m unittest test_phase2_services.py` -> 24 tests passing
+  - `cd mobile && flutter test` -> 8 tests passing
+  - `cd mobile && flutter analyze` -> no issues found
 - Current gaps: scanned PDF/OCR, deeper Phase 3 intelligence features, and Phase 4 launch hardening.
