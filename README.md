@@ -10,9 +10,19 @@ AI가 학습 자료를 자동으로 구조화하고, 개인별 기억 곡선과 
 
 ```
 Plowth/
-├── docs/               # 제품 문서
-│   ├── 어플 상세 초안.md
-│   └── sync-strategy.md
+├── docs/               # 문서 허브
+│   ├── PRD.md
+│   ├── ARCHITECTURE.md
+│   ├── HANDOFF.md
+│   ├── STATUS.md
+│   ├── CHANGELOG.md
+│   ├── designs/
+│   │   ├── capture-flow.md
+│   │   └── sync-strategy.md
+│   ├── issues/
+│   │   └── _INDEX.md
+│   └── decisions/
+│       └── ADR-001_docs-system-redesign.md
 ├── backend/            # FastAPI 백엔드 서버
 │   └── app/
 │       ├── api/        # API 라우터 (auth, sources, cards, reviews)
@@ -26,6 +36,16 @@ Plowth/
 ├── infra/              # Docker Compose (PostgreSQL, Redis)
 └── README.md
 ```
+
+## 📚 문서 허브
+
+- [Status Dashboard](docs/STATUS.md)
+- [Changelog](docs/CHANGELOG.md)
+- [PRD](docs/PRD.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Handoff](docs/HANDOFF.md)
+- [Capture Design](docs/designs/capture-flow.md)
+- [Sync Strategy](docs/designs/sync-strategy.md)
 
 ## 🚀 시작하기
 
@@ -87,6 +107,7 @@ flutter run
 
 - 1순위: 시험/자격증 준비
 - 2순위: 언어 학습
+
 ## 2026-04-11 Update
 
 - Roadmap status: Phase 1 and Phase 2 are implemented in code, and the first Phase 3 Intelligence slice is now landed.

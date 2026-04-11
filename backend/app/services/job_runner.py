@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import Protocol
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -17,6 +18,14 @@ from app.database import async_session_factory
 from app.models import Job
 
 JobHandler = Callable[[UUID], Awaitable[None]]
+
+
+class JobScheduler(Protocol):
+    async def schedule(self, job_id: UUID) -> bool: ...
+
+    async def schedule_recoverable_jobs(self) -> int: ...
+
+    async def shutdown(self) -> None: ...
 
 
 class JobRunner:
@@ -69,3 +78,32 @@ class JobRunner:
 
     async def _run(self, job_id: UUID) -> None:
         await self._card_generation_handler(job_id)
+
+
+class ExternalJobRunner:
+    """Production-oriented no-op scheduler.
+
+    Pending jobs remain in the database for an external worker / queue system to
+    pick up. The API stays compatible without pretending that local in-process
+    execution is available.
+    """
+
+    async def schedule(self, job_id: UUID) -> bool:
+        _ = job_id
+        return False
+
+    async def schedule_recoverable_jobs(self) -> int:
+        return 0
+
+    async def shutdown(self) -> None:
+        return None
+
+
+def build_job_runner(
+    *,
+    mode: str,
+    card_generation_handler: JobHandler,
+) -> JobScheduler:
+    if mode == "external":
+        return ExternalJobRunner()
+    return JobRunner(card_generation_handler=card_generation_handler)

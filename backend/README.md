@@ -29,3 +29,9 @@ alembic revision --autogenerate -m "describe change"
 ```
 
 If you need throwaway local tables without running migrations first, set `AUTO_CREATE_TABLES=true` in `.env`.
+
+## Production-oriented config
+
+- `CORS_ALLOW_ORIGINS` accepts a comma-separated list or JSON array. In production, wildcard CORS is rejected at startup.
+- `JOB_EXECUTION_MODE=in_process` keeps the current local background runner. Set `JOB_EXECUTION_MODE=external` when a real queue/worker system is responsible for pending jobs.
+- `APP_ENV=production` now requires `APP_DEBUG=false`, a non-placeholder `JWT_SECRET_KEY`, and explicit `CORS_ALLOW_ORIGINS`.
