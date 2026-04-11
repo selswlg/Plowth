@@ -96,8 +96,19 @@
 Plowth/
 ├── README.md
 ├── docs/
-│   ├── 어플 상세 초안.md                    # PRD (988줄)
-│   └── sync-strategy.md                     # 동기화 전략 설계
+│   ├── PRD.md                               # 제품 요구사항
+│   ├── ARCHITECTURE.md                      # 시스템 아키텍처
+│   ├── HANDOFF.md                           # 컨텍스트 전달
+│   ├── STATUS.md                            # 현재 상태 대시보드
+│   ├── CHANGELOG.md                         # 변경 이력
+│   ├── designs/
+│   │   ├── capture-flow.md                  # 캡처 플로우 설계
+│   │   └── sync-strategy.md                 # 동기화 전략 설계
+│   ├── issues/
+│   │   └── _INDEX.md                        # 이슈 인덱스
+│   └── decisions/
+│       ├── ADR-001_docs-system-redesign.md  # 문서 체계 결정 기록
+│       └── ADR-002_agent-docs-autonomy.md   # 문서 운영 자동화 규칙
 │
 ├── backend/
 │   ├── .env / .env.example
@@ -1212,9 +1223,14 @@ flutter:
 # ═══════════════════════════════════════════════════
 
 ## 참조 문서 목록
-1. **PRD (제품 요구사항):** d:\REAL\docs\어플 상세 초안.md (988줄)
-2. **동기화 전략:** d:\REAL\docs\sync-strategy.md
-3. **구현 계획서 v4:** 이 문서의 PART 1 참조
+1. **PRD (제품 요구사항):** d:\REAL\docs\PRD.md
+2. **시스템 아키텍처:** d:\REAL\docs\ARCHITECTURE.md
+3. **현재 상태 대시보드:** d:\REAL\docs\STATUS.md
+4. **캡처 플로우 설계:** d:\REAL\docs\designs\capture-flow.md
+5. **동기화 전략:** d:\REAL\docs\designs\sync-strategy.md
+6. **변경 이력:** d:\REAL\docs\CHANGELOG.md
+7. **이슈 인덱스:** d:\REAL\docs\issues\_INDEX.md
+8. **문서 운영 결정:** d:\REAL\docs\decisions\ADR-001_docs-system-redesign.md, d:\REAL\docs\decisions\ADR-002_agent-docs-autonomy.md
 
 ## 주의사항
 - Flutter 3.7+ 호환성: `withOpacity` 대신 `withValues(alpha: x)` 사용 필수

@@ -1,9 +1,12 @@
-# Plowth 캡처 플로우 & 학습 파이프라인 재설계 명세서
+# Plowth Capture Flow Redesign
 
-> **작성일:** 2026-04-10
-> **상태:** Phase/Task 재정렬 완료 · Phase 0/A 우선 구현 대기
-> **근거 문서:** `어플 상세 초안.md` (PRD), `HANDOFF.md` (기술 현황)
-> **참고 레포:** `RoundTable02/tutor-skills`, `EESJGong/scholar-skill`
+| Field | Value |
+|---|---|
+| Phase | Capture redesign / follow-up expansion |
+| Status | Phases 0/A/B/C/D/E/F/G/H implemented; future expansion remains deferred |
+| Related Docs | [PRD](../PRD.md), [Handoff](../HANDOFF.md), [Status](../STATUS.md) |
+| Last Updated | 2026-04-11 |
+| Reference Repos | `RoundTable02/tutor-skills`, `EESJGong/scholar-skill` |
 
 ---
 
@@ -28,7 +31,7 @@
 
 ### 1.1 PRD 비전 vs 현재 구현
 
-PRD(어플 상세 초안.md) Section 6.A, Line 104에 명시된 핵심 원칙:
+PRD(`../PRD.md`)의 Capture 요구사항에 명시된 핵심 원칙:
 
 > **"사용자는 자료만 넣는다."**
 > **"사용자는 카드 제작자가 아니라 학습 감독자가 된다."**
@@ -1160,14 +1163,14 @@ ALTER TABLE cards ADD COLUMN enrichment_history JSONB DEFAULT '[]';
        - mobile: flutter test
        - mobile: flutter analyze
 
-0.4. [x] `docs/STATUS_LOG.md`에 안정화 결과 기록
+0.4. [x] `docs/STATUS.md`에 안정화 결과 기록
 ```
 
 **Gate:**
 - backend unit tests pass
 - flutter tests pass
 - flutter analyze pass
-- STATUS_LOG 최신화 완료
+- STATUS 최신화 완료
 
 ---
 
@@ -1248,7 +1251,7 @@ B5. [x] 의존성 추가 기준 확정
 **Gate:**
 - OpenAPI/docs와 실제 Pydantic schema가 일치
 - mobile repository method contract가 확정
-- STATUS_LOG에 API 계약 결정 기록
+- STATUS에 API 계약 결정 기록
 
 #### Phase B 확정 계약
 

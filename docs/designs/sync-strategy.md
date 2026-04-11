@@ -1,7 +1,12 @@
-# Plowth — 오프라인 동기화 전략 설계 문서
+# Plowth Offline Sync Strategy
 
-> Phase 4에서 구현할 동기화 시스템의 설계를 Phase 1에서 확정합니다.
-> 이 문서는 구현 시 참조되는 기술 스펙입니다.
+| Field | Value |
+|---|---|
+| Phase | Phase 4 |
+| Status | Planned |
+| Last Updated | 2026-04-11 |
+
+> Phase 4에서 구현할 동기화 시스템의 설계를 정리한 기술 스펙이다.
 
 ---
 

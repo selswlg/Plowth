@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'app/theme/app_theme.dart';
+import 'features/auth/account_screen.dart';
 import 'features/auth/session_repository.dart';
 import 'features/capture_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/insight_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/review_session_screen.dart';
+import 'features/sync_manager.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,7 +28,7 @@ class _PlowthAppState extends State<PlowthApp> {
   AppLaunchState? _launchState;
   String? _errorMessage;
   bool _isLoading = true;
-  bool _isCreatingGuestSession = false;
+  bool _isSubmittingAuthRequest = false;
 
   @override
   void initState() {
@@ -68,13 +70,53 @@ class _PlowthAppState extends State<PlowthApp> {
   }
 
   Future<void> _handleGuestSessionStart(String learningGoal) async {
+    await _runSessionMutation(
+      action:
+          () =>
+              _sessionRepository.createGuestSession(learningGoal: learningGoal),
+      fallbackMessage: 'Guest session setup failed unexpectedly.',
+    );
+  }
+
+  Future<void> _handleRegister({
+    required String learningGoal,
+    required String email,
+    required String password,
+    String? name,
+  }) async {
+    await _runSessionMutation(
+      action:
+          () => _sessionRepository.register(
+            learningGoal: learningGoal,
+            email: email,
+            password: password,
+            name: name,
+          ),
+      fallbackMessage: 'Account registration failed unexpectedly.',
+    );
+  }
+
+  Future<void> _handleLogin({
+    required String email,
+    required String password,
+  }) async {
+    await _runSessionMutation(
+      action: () => _sessionRepository.login(email: email, password: password),
+      fallbackMessage: 'Login failed unexpectedly.',
+    );
+  }
+
+  Future<void> _runSessionMutation({
+    required Future<void> Function() action,
+    required String fallbackMessage,
+  }) async {
     setState(() {
-      _isCreatingGuestSession = true;
+      _isSubmittingAuthRequest = true;
       _errorMessage = null;
     });
 
     try {
-      await _sessionRepository.createGuestSession(learningGoal: learningGoal);
+      await action();
       final launchState = await _sessionRepository.loadLaunchState();
       if (!mounted) {
         return;
@@ -85,24 +127,27 @@ class _PlowthAppState extends State<PlowthApp> {
       });
     } on SessionException catch (error) {
       if (!mounted) {
-        return;
+        rethrow;
       }
 
       setState(() {
         _errorMessage = error.message;
       });
+      rethrow;
     } catch (_) {
+      final sessionError = SessionException(fallbackMessage);
       if (!mounted) {
-        return;
+        throw sessionError;
       }
 
       setState(() {
-        _errorMessage = 'Guest session setup failed unexpectedly.';
+        _errorMessage = fallbackMessage;
       });
+      throw sessionError;
     } finally {
       if (mounted) {
         setState(() {
-          _isCreatingGuestSession = false;
+          _isSubmittingAuthRequest = false;
         });
       }
     }
@@ -116,9 +161,10 @@ class _PlowthAppState extends State<PlowthApp> {
       }
       setState(() {
         _launchState = launchState;
-        _errorMessage = 'Your session expired. Start a new guest session.';
+        _errorMessage =
+            'Your session expired. Sign in or start a new guest session.';
         _isLoading = false;
-        _isCreatingGuestSession = false;
+        _isSubmittingAuthRequest = false;
       });
     } catch (_) {
       if (!mounted) {
@@ -126,11 +172,20 @@ class _PlowthAppState extends State<PlowthApp> {
       }
       setState(() {
         _launchState = null;
-        _errorMessage = 'Your session expired. Start a new guest session.';
+        _errorMessage =
+            'Your session expired. Sign in or start a new guest session.';
         _isLoading = false;
-        _isCreatingGuestSession = false;
+        _isSubmittingAuthRequest = false;
       });
     }
+  }
+
+  Future<void> _refreshLaunchState() async {
+    await _loadLaunchState();
+    if (!mounted) {
+      return;
+    }
+    setState(() => _errorMessage = null);
   }
 
   @override
@@ -162,23 +217,38 @@ class _PlowthAppState extends State<PlowthApp> {
         learningGoalLabel: SessionRepository.describeLearningGoal(
           _launchState?.learningGoal,
         ),
+        sessionRepository: _sessionRepository,
+        onSessionChanged: _refreshLaunchState,
+        onSignedOut: _refreshLaunchState,
       );
     }
 
     return OnboardingScreen(
       key: const ValueKey('onboarding'),
       initialLearningGoal: _launchState?.learningGoal,
-      isSubmitting: _isCreatingGuestSession,
+      startAtEntry: _launchState?.onboardingComplete ?? false,
+      isSubmitting: _isSubmittingAuthRequest,
       errorMessage: _errorMessage,
       onStartGuestSession: _handleGuestSessionStart,
+      onRegister: _handleRegister,
+      onLogin: _handleLogin,
     );
   }
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, required this.learningGoalLabel});
+  const MainShell({
+    super.key,
+    required this.learningGoalLabel,
+    required this.sessionRepository,
+    required this.onSessionChanged,
+    required this.onSignedOut,
+  });
 
   final String learningGoalLabel;
+  final SessionRepository sessionRepository;
+  final Future<void> Function() onSessionChanged;
+  final Future<void> Function() onSignedOut;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -189,6 +259,18 @@ class _MainShellState extends State<MainShell> {
   int _reviewRefreshSeed = 0;
   int _homeRefreshSeed = 0;
   int _insightRefreshSeed = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    SyncManager.shared.start();
+  }
+
+  @override
+  void dispose() {
+    SyncManager.shared.stop();
+    super.dispose();
+  }
 
   List<Widget> get _screens => [
     HomeScreen(
@@ -203,10 +285,10 @@ class _MainShellState extends State<MainShell> {
     ),
     CaptureScreen(onCaptureSubmitted: () => _setTab(0, refreshReview: true)),
     InsightScreen(refreshSeed: _insightRefreshSeed),
-    const _PlaceholderScreen(
-      title: 'Profile',
-      description: 'Account upgrade and preferences are still pending.',
-      icon: Icons.person_outline_rounded,
+    AccountScreen(
+      sessionRepository: widget.sessionRepository,
+      onSessionChanged: widget.onSessionChanged,
+      onSignedOut: widget.onSignedOut,
     ),
   ];
 
@@ -229,77 +311,102 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(index: _currentIndex, children: _screens),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: AppColors.border, width: 0.5)),
-        ),
-        child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (index) => _setTab(index),
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.home_rounded),
-              label: 'Home',
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const _SyncStatusBar(),
+          Container(
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: AppColors.border, width: 0.5),
+              ),
             ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.refresh_rounded),
-              label: 'Review',
+            child: BottomNavigationBar(
+              currentIndex: _currentIndex,
+              onTap: (index) => _setTab(index),
+              items: const [
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.home_rounded),
+                  label: 'Home',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.refresh_rounded),
+                  label: 'Review',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.add_circle_rounded),
+                  label: 'Capture',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.insights_rounded),
+                  label: 'Insight',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.person_rounded),
+                  label: 'Profile',
+                ),
+              ],
             ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.add_circle_rounded),
-              label: 'Capture',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.insights_rounded),
-              label: 'Insight',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.person_rounded),
-              label: 'Profile',
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _PlaceholderScreen extends StatelessWidget {
-  const _PlaceholderScreen({
-    required this.title,
-    required this.description,
-    required this.icon,
-  });
-
-  final String title;
-  final String description;
-  final IconData icon;
+class _SyncStatusBar extends StatelessWidget {
+  const _SyncStatusBar();
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.xl),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 64, color: AppColors.textTertiary),
-            const SizedBox(height: AppSpacing.md),
-            Text(
-              title,
-              style: AppTypography.headlineLarge.copyWith(
-                color: AppColors.textPrimary,
+    return ValueListenableBuilder<SyncStatusSnapshot>(
+      valueListenable: SyncManager.shared.status,
+      builder: (context, snapshot, child) {
+        final color = switch (snapshot.phase) {
+          SyncStatusPhase.syncing => AppColors.accent,
+          SyncStatusPhase.error => AppColors.accentRed,
+          SyncStatusPhase.pending => AppColors.accentOrange,
+          SyncStatusPhase.synced => AppColors.accentGreen,
+          SyncStatusPhase.idle => AppColors.textTertiary,
+        };
+        final icon = switch (snapshot.phase) {
+          SyncStatusPhase.syncing => Icons.sync_rounded,
+          SyncStatusPhase.error => Icons.error_outline_rounded,
+          SyncStatusPhase.pending => Icons.cloud_off_rounded,
+          SyncStatusPhase.synced => Icons.cloud_done_rounded,
+          SyncStatusPhase.idle => Icons.cloud_queue_rounded,
+        };
+        return Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm,
+          ),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceCard,
+            border: Border(
+              top: BorderSide(color: AppColors.border, width: 0.5),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  snapshot.label,
+                  style: AppTypography.bodySmall.copyWith(color: color),
+                ),
               ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              description,
-              style: AppTypography.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
+              if (snapshot.showRetry)
+                TextButton(
+                  onPressed:
+                      () => SyncManager.shared.syncNow(reason: 'manual-retry'),
+                  child: const Text('Retry'),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

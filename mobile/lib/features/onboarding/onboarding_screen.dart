@@ -1,20 +1,34 @@
 import 'package:flutter/material.dart';
 
 import '../../app/theme/app_theme.dart';
+import '../auth/auth_form_sheet.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({
     super.key,
     required this.onStartGuestSession,
+    required this.onRegister,
+    required this.onLogin,
     this.initialLearningGoal,
     this.errorMessage,
     this.isSubmitting = false,
+    this.startAtEntry = false,
   });
 
   final Future<void> Function(String learningGoal) onStartGuestSession;
+  final Future<void> Function({
+    required String learningGoal,
+    required String email,
+    required String password,
+    String? name,
+  })
+  onRegister;
+  final Future<void> Function({required String email, required String password})
+  onLogin;
   final String? initialLearningGoal;
   final String? errorMessage;
   final bool isSubmitting;
+  final bool startAtEntry;
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -81,6 +95,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   void initState() {
     super.initState();
     _selectedGoal = widget.initialLearningGoal;
+    _stage =
+        widget.startAtEntry
+            ? (widget.initialLearningGoal == null
+                ? _OnboardingStage.goal
+                : _OnboardingStage.entry)
+            : _OnboardingStage.intro;
   }
 
   @override
@@ -252,7 +272,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
           const SizedBox(height: AppSpacing.lg),
           Text(
-            'Guest mode creates a local device identity and requests API tokens from the backend. Register and login flows can plug into the same session storage next.',
+            'Start in guest mode for the fastest path, or attach email login now. All three flows land in the same local session storage and sync queue.',
             style: AppTypography.bodyMedium,
           ),
           if (widget.errorMessage != null) ...[
@@ -283,12 +303,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             width: double.infinity,
             height: 56,
             child: OutlinedButton(
-              onPressed:
-                  widget.isSubmitting
-                      ? null
-                      : () => _showPlannedMessage(
-                        'Register and login screens are still pending in Phase 1.',
-                      ),
+              onPressed: widget.isSubmitting ? null : _openRegisterSheet,
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.textPrimary,
                 side: const BorderSide(color: AppColors.border),
@@ -296,20 +311,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
               ),
-              child: const Text('Register'),
+              child: const Text('Register With Email'),
             ),
           ),
           const SizedBox(height: AppSpacing.sm),
           Center(
             child: TextButton(
-              onPressed:
-                  widget.isSubmitting
-                      ? null
-                      : () => _showPlannedMessage(
-                        'Login will be connected after the guest flow is stable.',
-                      ),
+              onPressed: widget.isSubmitting ? null : _openLoginSheet,
               child: Text(
-                'Already have an account?',
+                'Already have an account? Log in',
                 style: AppTypography.bodyMedium.copyWith(
                   color: AppColors.primary,
                 ),
@@ -370,10 +380,38 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     setState(() => _stage = _OnboardingStage.goal);
   }
 
-  void _showPlannedMessage(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+  Future<void> _openRegisterSheet() {
+    final selectedGoal = _selectedGoal;
+    if (selectedGoal == null) {
+      setState(() => _stage = _OnboardingStage.goal);
+      return Future.value();
+    }
+
+    return showAuthFormSheet(
+      context: context,
+      mode: AuthSheetMode.register,
+      onSubmit: (submission) {
+        return widget.onRegister(
+          learningGoal: selectedGoal,
+          email: submission.email,
+          password: submission.password,
+          name: submission.name,
+        );
+      },
+    );
+  }
+
+  Future<void> _openLoginSheet() {
+    return showAuthFormSheet(
+      context: context,
+      mode: AuthSheetMode.login,
+      onSubmit: (submission) {
+        return widget.onLogin(
+          email: submission.email,
+          password: submission.password,
+        );
+      },
+    );
   }
 }
 

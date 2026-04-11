@@ -1,6 +1,8 @@
 import asyncio
 import unittest
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from app.services.ai_orchestrator import CostController, ModelRouter, PromptManager
@@ -22,6 +24,7 @@ from app.services.cognitive_update import (
     suggested_update_action,
 )
 from app.services.daily_review_queue import _priority_for_card
+from app.services.daily_review_queue import mark_daily_queue_completed
 from app.services.insight_service import build_coaching_tip, calculate_streaks
 from app.services.job_runner import JobRunner
 from app.services.link_ingest import (
@@ -31,8 +34,20 @@ from app.services.link_ingest import (
 )
 from app.services.pdf_ingest import PdfIngestError, extract_text_from_pdf
 from app.services.review_scheduler import calculate_schedule
+from app.services.sync_service import (
+    apply_review_submission,
+    list_changed_cards,
+    list_changed_memory_states,
+    process_sync_push,
+)
 from app.services.tutor_service import TutorContext, build_tutor_payload
-from app.schemas import CardUpdate, DailyInsight, WeakConcept
+from app.schemas import (
+    CardUpdate,
+    DailyInsight,
+    SyncCardResponse,
+    SyncEventEnvelope,
+    WeakConcept,
+)
 
 
 class OrchestratorTests(unittest.TestCase):
@@ -499,6 +514,256 @@ class TutorServiceTests(unittest.TestCase):
         self.assertEqual(payload["related_concepts"], [])
         self.assertIn("neighboring cards", payload["content"])
         self.assertEqual(payload["bullets"][0], "How is diffusion different?")
+
+
+class _FakeScalarResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+class _FakeRowResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _FakeScalarsResult:
+    def __init__(self, values):
+        self._values = values
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._values
+
+
+class _FakeNestedTransaction:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _FakeAsyncSession:
+    def __init__(self, execute_results):
+        self._execute_results = list(execute_results)
+        self.queries = []
+        self.added = []
+        self.flush_count = 0
+
+    async def execute(self, query):
+        self.queries.append(query)
+        return self._execute_results.pop(0)
+
+    def begin_nested(self):
+        return _FakeNestedTransaction()
+
+    def add(self, item):
+        self.added.append(item)
+
+    async def flush(self):
+        self.flush_count += 1
+
+
+class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_process_sync_push_skips_duplicate_client_event_ids(self):
+        user_id = uuid4()
+        card_id = uuid4()
+        review_time = datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc)
+        fake_card = SimpleNamespace(id=card_id)
+        fake_memory_state = SimpleNamespace(
+            card_id=card_id,
+            stability=1.5,
+            difficulty=3.2,
+            retrievability=0.9,
+            reps=2,
+            lapses=0,
+            state="review",
+            next_review_at=review_time + timedelta(days=1),
+            last_review_at=review_time,
+            updated_at=review_time,
+        )
+        session = _FakeAsyncSession(
+            [
+                _FakeScalarResult(None),
+                _FakeScalarResult(SimpleNamespace(client_event_id="evt-1")),
+            ]
+        )
+        user = SimpleNamespace(id=user_id, preferences={"learning_goal": "exam"})
+        event = SyncEventEnvelope(
+            client_event_id="evt-1",
+            event_type="review",
+            event_payload={
+                "card_id": str(card_id),
+                "rating": "good",
+                "response_time_ms": 1800,
+            },
+            client_timestamp=review_time,
+        )
+
+        with (
+            patch(
+                "app.services.sync_service.apply_review_submission",
+                AsyncMock(
+                    return_value=(SimpleNamespace(id=uuid4()), fake_memory_state, fake_card)
+                ),
+            ) as apply_review_submission,
+            patch(
+                "app.services.sync_service.serialize_card",
+                AsyncMock(
+                    return_value=SyncCardResponse(
+                        id=card_id,
+                        source_id=uuid4(),
+                        source_title="Biology Notes",
+                        card_type="definition",
+                        question="What is ATP?",
+                        answer="Cellular energy currency.",
+                        difficulty=3,
+                        is_active=True,
+                        tags={"domain_hint": "exam"},
+                        updated_at=review_time,
+                    )
+                ),
+            ) as serialize_card,
+        ):
+            result = await process_sync_push(
+                db=session,
+                user=user,
+                device_id="device-123",
+                events=[event, event],
+            )
+
+        self.assertEqual(result.processed_event_ids, ["evt-1"])
+        self.assertEqual(result.skipped_event_ids, ["evt-1"])
+        self.assertEqual(result.errors, [])
+        self.assertEqual(len(result.updated_cards), 1)
+        self.assertEqual(len(result.updated_memory_states), 1)
+        self.assertEqual(apply_review_submission.await_count, 1)
+        self.assertEqual(serialize_card.await_count, 1)
+        self.assertEqual(len(session.added), 1)
+        self.assertEqual(session.added[0].client_event_id, "evt-1")
+        self.assertEqual(session.added[0].device_id, "device-123")
+        self.assertEqual(session.flush_count, 1)
+
+    async def test_apply_review_submission_reuses_first_duplicate_client_review(self):
+        user_id = uuid4()
+        card_id = uuid4()
+        reviewed_at = datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc)
+        existing_review = SimpleNamespace(id=uuid4(), reviewed_at=reviewed_at)
+        duplicate_review = SimpleNamespace(
+            id=uuid4(),
+            reviewed_at=reviewed_at - timedelta(minutes=1),
+        )
+        memory_state = SimpleNamespace(card_id=card_id, updated_at=reviewed_at)
+        stale_memory_state = SimpleNamespace(
+            card_id=card_id,
+            updated_at=reviewed_at - timedelta(minutes=5),
+        )
+        session = _FakeAsyncSession(
+            [
+                _FakeScalarsResult([existing_review, duplicate_review]),
+                _FakeScalarsResult([memory_state, stale_memory_state]),
+            ]
+        )
+        user = SimpleNamespace(id=user_id)
+        card = SimpleNamespace(id=card_id, difficulty=3)
+
+        with patch(
+            "app.services.sync_service._get_card_for_user",
+            AsyncMock(return_value=card),
+        ):
+            review, returned_memory_state, returned_card = await apply_review_submission(
+                db=session,
+                user=user,
+                card_id=card_id,
+                rating="good",
+                response_time_ms=1800,
+                client_id="evt-duplicate",
+                reviewed_at=reviewed_at,
+            )
+
+        self.assertIs(review, existing_review)
+        self.assertIs(returned_memory_state, memory_state)
+        self.assertIs(returned_card, card)
+        self.assertEqual(session.flush_count, 0)
+
+    async def test_mark_daily_queue_completed_updates_all_duplicate_rows(self):
+        completed_at = datetime(2026, 4, 11, 12, 30, tzinfo=timezone.utc)
+        row_a = SimpleNamespace(status="pending", completed_at=None)
+        row_b = SimpleNamespace(status="pending", completed_at=None)
+        session = _FakeAsyncSession([_FakeScalarsResult([row_a, row_b])])
+
+        await mark_daily_queue_completed(
+            db=session,
+            user_id=uuid4(),
+            card_id=uuid4(),
+            completed_at=completed_at,
+        )
+
+        self.assertEqual(row_a.status, "completed")
+        self.assertEqual(row_b.status, "completed")
+        self.assertEqual(row_a.completed_at, completed_at)
+        self.assertEqual(row_b.completed_at, completed_at)
+
+    async def test_list_changed_cards_applies_since_filter_and_serializes_rows(self):
+        updated_at = datetime(2026, 4, 11, 13, 0, tzinfo=timezone.utc)
+        card = SimpleNamespace(
+            id=uuid4(),
+            source_id=uuid4(),
+            card_type="definition",
+            question="What is osmosis?",
+            answer="Passive water movement.",
+            difficulty=2,
+            is_active=True,
+            tags={"domain_hint": "exam"},
+            updated_at=updated_at,
+        )
+        session = _FakeAsyncSession([_FakeRowResult([(card, "Biology Unit 1")])])
+
+        result = await list_changed_cards(
+            db=session,
+            user_id=uuid4(),
+            since=updated_at - timedelta(hours=1),
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].source_title, "Biology Unit 1")
+        self.assertEqual(result[0].question, "What is osmosis?")
+        self.assertIn("cards.updated_at >", str(session.queries[0]))
+
+    async def test_list_changed_memory_states_applies_since_filter(self):
+        updated_at = datetime(2026, 4, 11, 14, 0, tzinfo=timezone.utc)
+        memory_state = SimpleNamespace(
+            card_id=uuid4(),
+            stability=2.4,
+            difficulty=3.1,
+            retrievability=0.88,
+            reps=3,
+            lapses=1,
+            state="review",
+            next_review_at=updated_at + timedelta(days=2),
+            last_review_at=updated_at,
+            updated_at=updated_at,
+        )
+        session = _FakeAsyncSession([_FakeScalarsResult([memory_state])])
+
+        result = await list_changed_memory_states(
+            db=session,
+            user_id=uuid4(),
+            since=updated_at - timedelta(minutes=30),
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].reps, 3)
+        self.assertEqual(result[0].state, "review")
+        self.assertIn("memory_states.updated_at >", str(session.queries[0]))
 
 
 if __name__ == "__main__":

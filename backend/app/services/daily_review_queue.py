@@ -4,6 +4,7 @@ Daily review queue generation and completion helpers.
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timezone
 from uuid import UUID
 
@@ -11,6 +12,8 @@ from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Card, ConceptRelation, DailyReviewQueue, MemoryState, MistakePattern
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -181,9 +184,19 @@ async def mark_daily_queue_completed(
             DailyReviewQueue.queue_date == queue_date,
         )
     )
-    row = result.scalar_one_or_none()
-    if row is None:
+    rows = result.scalars().all()
+    if not rows:
         return
 
-    row.status = "completed"
-    row.completed_at = completed_at
+    if len(rows) > 1:
+        logger.warning(
+            "Duplicate daily_review_queue rows detected user_id=%s card_id=%s queue_date=%s count=%s",
+            user_id,
+            card_id,
+            queue_date,
+            len(rows),
+        )
+
+    for row in rows:
+        row.status = "completed"
+        row.completed_at = completed_at

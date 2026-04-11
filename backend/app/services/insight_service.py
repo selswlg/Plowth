@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+import logging
 from uuid import UUID
 
 from sqlalchemy import case, func, select
@@ -22,6 +23,8 @@ from app.models import (
 )
 from app.schemas import DailyInsight, InsightSnapshot, WeakConcept
 from app.services.daily_review_queue import sync_daily_review_queue
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -204,9 +207,18 @@ async def refresh_learning_profile(
     )
 
     result = await db.execute(
-        select(LearningProfile).where(LearningProfile.user_id == user_id)
+        select(LearningProfile)
+        .where(LearningProfile.user_id == user_id)
+        .order_by(LearningProfile.updated_at.desc(), LearningProfile.id.desc())
     )
-    profile = result.scalar_one_or_none()
+    profiles = result.scalars().all()
+    if len(profiles) > 1:
+        logger.warning(
+            "Duplicate learning_profile rows detected user_id=%s count=%s",
+            user_id,
+            len(profiles),
+        )
+    profile = profiles[0] if profiles else None
     if profile is None:
         profile = LearningProfile(user_id=user_id)
         db.add(profile)
@@ -241,14 +253,25 @@ async def _upsert_mistake_pattern(
     occurred_at: datetime,
 ) -> None:
     result = await db.execute(
-        select(MistakePattern).where(
+        select(MistakePattern)
+        .where(
             MistakePattern.user_id == user_id,
             MistakePattern.concept_id == concept_id,
             MistakePattern.pattern_type == pattern_type,
             MistakePattern.resolved == False,
         )
+        .order_by(MistakePattern.last_occurred_at.desc(), MistakePattern.id.desc())
     )
-    pattern = result.scalar_one_or_none()
+    patterns = result.scalars().all()
+    if len(patterns) > 1:
+        logger.warning(
+            "Duplicate mistake_pattern rows detected user_id=%s concept_id=%s pattern_type=%s count=%s",
+            user_id,
+            concept_id,
+            pattern_type,
+            len(patterns),
+        )
+    pattern = patterns[0] if patterns else None
     if pattern is None:
         db.add(
             MistakePattern(
@@ -263,8 +286,12 @@ async def _upsert_mistake_pattern(
         return
 
     pattern.description = description
-    pattern.occurrence_count += 1
+    pattern.occurrence_count += 1 + sum(
+        duplicate.occurrence_count for duplicate in patterns[1:]
+    )
     pattern.last_occurred_at = occurred_at
+    for duplicate in patterns[1:]:
+        duplicate.resolved = True
 
 
 async def track_review_intelligence_signals(

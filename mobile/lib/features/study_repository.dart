@@ -5,7 +5,10 @@ import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/config/api_config.dart';
-import 'auth/session_repository.dart';
+import '../core/database/local_database_repository.dart';
+import 'auth/auth_session.dart';
+import 'local_review_scheduler.dart';
+import 'sync_manager.dart';
 
 class StudyException implements Exception {
   const StudyException(this.message);
@@ -493,11 +496,15 @@ class CognitiveUpdateMatch {
 }
 
 class StudyRepository {
-  StudyRepository({Dio? dio}) : _dio = dio ?? _buildDio();
+  StudyRepository({
+    Dio? dio,
+    LocalDatabaseRepository? localDatabaseRepository,
+  }) : _dio = dio ?? _buildDio(),
+       _localDatabaseRepository =
+           localDatabaseRepository ?? LocalDatabaseRepository();
 
-  static const _accessTokenKey = 'access_token';
-  static const _refreshTokenKey = 'refresh_token';
   final Dio _dio;
+  final LocalDatabaseRepository _localDatabaseRepository;
 
   Future<SourceGenerationResult> createTextSource({
     String? title,
@@ -697,8 +704,8 @@ class StudyRepository {
   }
 
   Future<List<StudyCard>> getCards({String? sourceId}) async {
-    await _authorize();
     try {
+      await _authorize();
       final response = await _dio.get<List<dynamic>>(
         '/cards',
         queryParameters: {
@@ -706,12 +713,29 @@ class StudyRepository {
           'limit': 100,
         },
       );
-      return (response.data ?? const <dynamic>[])
-          .whereType<Map<String, dynamic>>()
+      final rawCards =
+          (response.data ?? const <dynamic>[])
+              .whereType<Map<String, dynamic>>()
+              .toList();
+      await SyncManager.shared.cacheRemoteCards(rawCards);
+      final cards = rawCards
           .map(StudyCard.fromJson)
           .toList();
+      return _mergePendingCardEdits(cards);
     } on DioException catch (error) {
+      if (_isOfflineDioError(error)) {
+        final cachedCards = await _readCachedCards(sourceId: sourceId);
+        if (cachedCards.isNotEmpty) {
+          return cachedCards;
+        }
+      }
       throw StudyException(_mapDioError(error));
+    } on StudyException {
+      final cachedCards = await _readCachedCards(sourceId: sourceId);
+      if (cachedCards.isNotEmpty) {
+        return cachedCards;
+      }
+      rethrow;
     }
   }
 
@@ -722,68 +746,161 @@ class StudyRepository {
     required int difficulty,
     Map<String, dynamic>? tags,
   }) async {
-    await _authorize();
-    try {
-      final response = await _dio.patch<Map<String, dynamic>>(
-        '/cards/$cardId',
-        data: {
-          'question': question.trim(),
-          'answer': answer.trim(),
-          'difficulty': difficulty,
-          if (tags != null) 'tags': tags,
-        },
-      );
-      final payload = response.data;
-      if (payload == null) {
-        throw const StudyException('Card update returned no payload.');
-      }
-      return StudyCard.fromJson(payload);
-    } on DioException catch (error) {
-      throw StudyException(_mapDioError(error));
-    }
+    await _ensureSessionExists();
+    final cachedCard = await _localDatabaseRepository.getCachedCard(cardId);
+    final updatedAt = DateTime.now().toUtc();
+    final nextCard = StudyCard(
+      id: cardId,
+      sourceId: cachedCard?.sourceId ?? '',
+      cardType: cachedCard?.cardType ?? 'definition',
+      question: question.trim(),
+      answer: answer.trim(),
+      difficulty: difficulty,
+      isActive: cachedCard?.isActive ?? true,
+      tags: tags ?? _decodeJsonMap(cachedCard?.tagsJson),
+    );
+    await _localDatabaseRepository.upsertCachedCard(
+      id: nextCard.id,
+      sourceId: nextCard.sourceId,
+      sourceTitle: cachedCard?.sourceTitle,
+      cardType: nextCard.cardType,
+      question: nextCard.question,
+      answer: nextCard.answer,
+      difficulty: nextCard.difficulty,
+      isActive: nextCard.isActive,
+      tagsJson: _encodeJson(nextCard.tags),
+      updatedAt: updatedAt,
+    );
+    await _localDatabaseRepository.queueSyncEvent(
+      id: _buildSyncEventId(prefix: 'edit'),
+      eventType: 'card_edit',
+      eventPayload: jsonEncode({
+        'card_id': cardId,
+        'question': nextCard.question,
+        'answer': nextCard.answer,
+        'difficulty': nextCard.difficulty,
+        if (nextCard.tags != null) 'tags': nextCard.tags,
+      }),
+      createdAt: updatedAt,
+    );
+    await SyncManager.shared.registerPendingWork();
+    return nextCard;
   }
 
   Future<List<ReviewQueueItem>> getReviewQueue({int limit = 50}) async {
-    await _authorize();
     try {
+      await SyncManager.shared.syncNow(reason: 'review-queue');
+    } catch (_) {
+      // The queue can still fall back to local cache when sync fails.
+    }
+    try {
+      await _authorize();
       final response = await _dio.get<List<dynamic>>(
         '/reviews/queue',
         queryParameters: {'limit': limit},
       );
-      return (response.data ?? const <dynamic>[])
+      final rawQueue =
+          (response.data ?? const <dynamic>[])
           .whereType<Map<String, dynamic>>()
+          .toList();
+      await SyncManager.shared.cacheReviewQueueItems(rawQueue);
+      final queue = rawQueue
           .map(ReviewQueueItem.fromJson)
           .toList();
+      return _mergePendingEditsIntoQueue(queue);
     } on DioException catch (error) {
+      if (_isOfflineDioError(error)) {
+        final localQueue = await _buildLocalReviewQueue(limit: limit);
+        if (localQueue.isNotEmpty) {
+          return localQueue;
+        }
+        throw const StudyException(
+          'Offline and no cached review queue is available yet.',
+        );
+      }
       throw StudyException(_mapDioError(error));
+    } on StudyException {
+      final localQueue = await _buildLocalReviewQueue(limit: limit);
+      if (localQueue.isNotEmpty) {
+        return localQueue;
+      }
+      rethrow;
     }
   }
 
   Future<ReviewSubmission> submitReview({
-    required String cardId,
+    required ReviewQueueItem card,
     required String rating,
     required int responseTimeMs,
     required String clientId,
   }) async {
-    await _authorize();
-    try {
-      final response = await _dio.post<Map<String, dynamic>>(
-        '/reviews',
-        data: {
-          'card_id': cardId,
-          'rating': rating,
-          'response_time_ms': responseTimeMs,
-          'client_id': clientId,
-        },
-      );
-      final payload = response.data;
-      if (payload == null) {
-        throw const StudyException('Review submission returned no payload.');
-      }
-      return ReviewSubmission.fromJson(payload);
-    } on DioException catch (error) {
-      throw StudyException(_mapDioError(error));
-    }
+    await _ensureSessionExists();
+    final now = DateTime.now().toUtc();
+    final cachedMemoryState = await _localDatabaseRepository.getCachedMemoryState(
+      card.id,
+    );
+    final schedule = calculateLocalSchedule(
+      LocalScheduleInput(
+        reps: cachedMemoryState?.reps ?? card.reps,
+        lapses: cachedMemoryState?.lapses ?? card.lapses,
+        state: cachedMemoryState?.state ?? card.state,
+        stability: cachedMemoryState?.stability,
+        difficulty:
+            cachedMemoryState?.difficulty ?? card.difficulty.toDouble(),
+        lastReviewAt:
+            cachedMemoryState?.lastReviewAt == null
+                ? null
+                : DateTime.fromMillisecondsSinceEpoch(
+                  cachedMemoryState!.lastReviewAt!,
+                  isUtc: true,
+                ),
+        rating: rating,
+        responseTimeMs: responseTimeMs,
+        seedDifficulty: card.difficulty,
+        now: now,
+      ),
+    );
+    await _localDatabaseRepository.upsertCachedCard(
+      id: card.id,
+      sourceId: card.sourceId,
+      sourceTitle: card.sourceTitle,
+      cardType: card.cardType,
+      question: card.question,
+      answer: card.answer,
+      difficulty: card.difficulty,
+      isActive: true,
+      tagsJson: _encodeJson(card.tags),
+      updatedAt: now,
+    );
+    await _localDatabaseRepository.upsertCachedMemoryState(
+      cardId: card.id,
+      stability: schedule.stability,
+      difficulty: schedule.difficulty,
+      retrievability: schedule.retrievability,
+      reps: schedule.reps,
+      lapses: schedule.lapses,
+      state: schedule.state,
+      nextReviewAt: schedule.nextReviewAt,
+      lastReviewAt: schedule.lastReviewAt,
+      updatedAt: now,
+    );
+    await _localDatabaseRepository.queueSyncEvent(
+      id: clientId,
+      eventType: 'review',
+      eventPayload: jsonEncode({
+        'card_id': card.id,
+        'rating': rating,
+        'response_time_ms': responseTimeMs,
+      }),
+      createdAt: now,
+    );
+    await SyncManager.shared.registerPendingWork();
+    return ReviewSubmission(
+      cardId: card.id,
+      rating: rating,
+      responseTimeMs: responseTimeMs,
+      reviewedAt: now.toLocal(),
+    );
   }
 
   Future<TodayReviewSummary> getTodaySummary() async {
@@ -895,85 +1012,216 @@ class StudyRepository {
     }
   }
 
-  Future<void> _authorize() async {
+  Future<void> _ensureSessionExists() async {
     final prefs = await SharedPreferences.getInstance();
-    var accessToken = prefs.getString(_accessTokenKey);
+    final accessToken = prefs.getString(AuthSession.accessTokenKey);
     if (accessToken == null || accessToken.isEmpty) {
       throw const StudyException(
         'No authenticated session found on this device.',
       );
     }
-
-    if (_isJwtExpired(accessToken)) {
-      accessToken = await _refreshAccessToken(prefs);
-    }
-
-    _dio.options.headers['Authorization'] = 'Bearer $accessToken';
   }
 
-  Future<String> _refreshAccessToken(SharedPreferences prefs) async {
-    final refreshToken = prefs.getString(_refreshTokenKey);
-    if (refreshToken == null || refreshToken.isEmpty) {
-      await _clearStoredTokens();
-      throw const StudyException('Your session expired. Start a new session.');
-    }
-
+  Future<void> _authorize() async {
     try {
-      final response = await _buildDio().post<Map<String, dynamic>>(
-        '/auth/refresh',
-        data: {'refresh_token': refreshToken},
-      );
-      final payload = response.data;
-      final accessToken = payload?['access_token'] as String?;
-      final nextRefreshToken = payload?['refresh_token'] as String?;
-      if (accessToken == null ||
-          accessToken.isEmpty ||
-          nextRefreshToken == null ||
-          nextRefreshToken.isEmpty) {
-        throw const StudyException(
-          'The API returned an incomplete auth response.',
-        );
-      }
-
-      await prefs.setString(_accessTokenKey, accessToken);
-      await prefs.setString(_refreshTokenKey, nextRefreshToken);
-      return accessToken;
-    } on DioException {
-      await _clearStoredTokens();
-      throw const StudyException('Your session expired. Start a new session.');
+      await AuthSession.authorize(_dio);
+    } on AuthSessionException catch (error) {
+      throw StudyException(error.message);
     }
   }
 
-  Future<void> _clearStoredTokens() async {
-    await SessionRepository.clearStoredSession(notify: true);
+  Future<List<StudyCard>> _readCachedCards({String? sourceId}) async {
+    final cachedCards = await _localDatabaseRepository.getCachedCards(
+      sourceId: sourceId,
+    );
+    return cachedCards
+        .map(
+          (card) => StudyCard(
+            id: card.id,
+            sourceId: card.sourceId,
+            cardType: card.cardType,
+            question: card.question,
+            answer: card.answer,
+            difficulty: card.difficulty,
+            isActive: card.isActive,
+            tags: _decodeJsonMap(card.tagsJson),
+          ),
+        )
+        .toList();
   }
 
-  bool _isJwtExpired(String token) {
-    try {
-      final parts = token.split('.');
-      if (parts.length != 3) {
-        return true;
+  Future<Map<String, Map<String, dynamic>>> _loadPendingCardEdits() async {
+    final events = await _localDatabaseRepository.getQueuedSyncEvents();
+    final edits = <String, Map<String, dynamic>>{};
+    for (final event in events) {
+      if (event.eventType != 'card_edit') {
+        continue;
       }
-      final payload = jsonDecode(
-        utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
-      );
+      final payload = jsonDecode(event.eventPayload);
       if (payload is! Map<String, dynamic>) {
-        return true;
+        continue;
       }
-      final expiresAtSeconds = payload['exp'];
-      if (expiresAtSeconds is! num) {
-        return true;
+      final cardId = payload['card_id']?.toString();
+      if (cardId == null || cardId.isEmpty) {
+        continue;
       }
-      final expiresAt = DateTime.fromMillisecondsSinceEpoch(
-        expiresAtSeconds.toInt() * 1000,
-        isUtc: true,
-      );
-      return DateTime.now().toUtc().isAfter(
-        expiresAt.subtract(const Duration(seconds: 30)),
-      );
-    } catch (_) {
-      return true;
+      edits[cardId] = payload;
     }
+    return edits;
+  }
+
+  Future<List<StudyCard>> _mergePendingCardEdits(List<StudyCard> cards) async {
+    final pendingEdits = await _loadPendingCardEdits();
+    return cards.map((card) {
+      final edit = pendingEdits[card.id];
+      if (edit == null) {
+        return card;
+      }
+      return StudyCard(
+        id: card.id,
+        sourceId: card.sourceId,
+        cardType: card.cardType,
+        question: edit['question']?.toString() ?? card.question,
+        answer: edit['answer']?.toString() ?? card.answer,
+        difficulty: _asInt(edit['difficulty'], card.difficulty),
+        isActive: edit['is_active'] as bool? ?? card.isActive,
+        tags: (edit['tags'] as Map?)?.cast<String, dynamic>() ?? card.tags,
+      );
+    }).toList();
+  }
+
+  Future<List<ReviewQueueItem>> _mergePendingEditsIntoQueue(
+    List<ReviewQueueItem> queue,
+  ) async {
+    final pendingEdits = await _loadPendingCardEdits();
+    return queue.map((item) {
+      final edit = pendingEdits[item.id];
+      if (edit == null) {
+        return item;
+      }
+      return ReviewQueueItem(
+        id: item.id,
+        sourceId: item.sourceId,
+        sourceTitle: item.sourceTitle,
+        question: edit['question']?.toString() ?? item.question,
+        answer: edit['answer']?.toString() ?? item.answer,
+        cardType: item.cardType,
+        difficulty: _asInt(edit['difficulty'], item.difficulty),
+        tags: (edit['tags'] as Map?)?.cast<String, dynamic>() ?? item.tags,
+        state: item.state,
+        nextReviewAt: item.nextReviewAt,
+        reps: item.reps,
+        lapses: item.lapses,
+      );
+    }).toList();
+  }
+
+  Future<List<ReviewQueueItem>> _buildLocalReviewQueue({int limit = 50}) async {
+    final cachedCards = await _localDatabaseRepository.getCachedCards();
+    final cachedMemoryStates = await _localDatabaseRepository
+        .getCachedMemoryStates();
+    final memoryByCardId = {
+      for (final memoryState in cachedMemoryStates)
+        memoryState.cardId: memoryState,
+    };
+    final now = DateTime.now().toUtc();
+    final dueCards =
+        cachedCards.where((card) {
+          if (!card.isActive) {
+            return false;
+          }
+          final memoryState = memoryByCardId[card.id];
+          if (memoryState == null || memoryState.nextReviewAt == null) {
+            return true;
+          }
+          final nextReviewAt = DateTime.fromMillisecondsSinceEpoch(
+            memoryState.nextReviewAt!,
+            isUtc: true,
+          );
+          return !nextReviewAt.isAfter(now);
+        }).toList()
+          ..sort((left, right) {
+            final leftMemory = memoryByCardId[left.id];
+            final rightMemory = memoryByCardId[right.id];
+            if (leftMemory?.nextReviewAt == null &&
+                rightMemory?.nextReviewAt == null) {
+              return left.updatedAt.compareTo(right.updatedAt);
+            }
+            if (leftMemory?.nextReviewAt == null) {
+              return -1;
+            }
+            if (rightMemory?.nextReviewAt == null) {
+              return 1;
+            }
+            return leftMemory!.nextReviewAt!.compareTo(rightMemory!.nextReviewAt!);
+          });
+
+    return dueCards.take(limit).map((card) {
+      final memoryState = memoryByCardId[card.id];
+      return ReviewQueueItem(
+        id: card.id,
+        sourceId: card.sourceId,
+        sourceTitle: card.sourceTitle,
+        question: card.question,
+        answer: card.answer,
+        cardType: card.cardType,
+        difficulty: card.difficulty,
+        tags: _decodeJsonMap(card.tagsJson),
+        state: memoryState?.state ?? 'new',
+        nextReviewAt:
+            memoryState?.nextReviewAt == null
+                ? null
+                : DateTime.fromMillisecondsSinceEpoch(
+                  memoryState!.nextReviewAt!,
+                  isUtc: true,
+                ).toLocal(),
+        reps: memoryState?.reps ?? 0,
+        lapses: memoryState?.lapses ?? 0,
+      );
+    }).toList();
+  }
+
+  bool _isOfflineDioError(DioException error) {
+    return error.type == DioExceptionType.connectionError ||
+        error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.sendTimeout ||
+        error.type == DioExceptionType.receiveTimeout;
+  }
+
+  Map<String, dynamic>? _decodeJsonMap(String? rawJson) {
+    if (rawJson == null || rawJson.isEmpty) {
+      return null;
+    }
+    final decoded = jsonDecode(rawJson);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+    if (decoded is Map) {
+      return decoded.cast<String, dynamic>();
+    }
+    return null;
+  }
+
+  String? _encodeJson(Object? value) {
+    if (value == null) {
+      return null;
+    }
+    return jsonEncode(value);
+  }
+
+  String _buildSyncEventId({String prefix = 'evt'}) {
+    final timestamp = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+    return '$prefix-$timestamp';
+  }
+
+  int _asInt(Object? rawValue, int fallback) {
+    if (rawValue is int) {
+      return rawValue;
+    }
+    if (rawValue is num) {
+      return rawValue.toInt();
+    }
+    return fallback;
   }
 
   static Dio _buildDio() {

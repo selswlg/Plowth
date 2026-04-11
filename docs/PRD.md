@@ -1,4 +1,7 @@
-**상세 PRD 초안**
+# Plowth PRD
+
+> Product requirements and product strategy baseline.
+> Migrated from the original draft on 2026-04-11.
 
 > **Anki의 강력함 + Duolingo의 접근성 + AI의 개인화**
 > 하지만 실제 제품은 **“강력한 도구” 우선 전략**으로 설계한다.

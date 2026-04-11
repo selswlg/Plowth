@@ -99,7 +99,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
 
     try {
       final response = await _repository.submitReview(
-        cardId: card.id,
+        card: card,
         rating: rating,
         responseTimeMs: max(500, elapsed.inMilliseconds),
         clientId:

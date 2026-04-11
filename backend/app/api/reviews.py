@@ -14,8 +14,7 @@ from app.dependencies import get_current_user
 from app.models import Card, DailyReviewQueue, MemoryState, Review, Source, User
 from app.schemas import ReviewCreate, ReviewQueueCard, ReviewResponse, ReviewSessionSummary
 from app.services.daily_review_queue import mark_daily_queue_completed, sync_daily_review_queue
-from app.services.insight_service import track_review_intelligence_signals
-from app.services.review_scheduler import calculate_schedule
+from app.services.sync_service import apply_review_submission
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
 
@@ -87,88 +86,13 @@ async def submit_review(
     db: AsyncSession = Depends(get_db),
 ):
     """Submit a review for a card (append-only)."""
-    # Verify card exists and belongs to user
-    card_result = await db.execute(
-        select(Card).where(Card.id == body.card_id, Card.user_id == current_user.id)
-    )
-    card = card_result.scalar_one_or_none()
-    if not card:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found")
-
-    # Idempotent check: if client_id already exists, return existing review
-    if body.client_id:
-        existing = await db.execute(
-            select(Review).where(
-                Review.client_id == body.client_id,
-                Review.user_id == current_user.id,
-            )
-        )
-        existing_review = existing.scalar_one_or_none()
-        if existing_review:
-            return existing_review
-
-    # Create review (append-only)
-    review = Review(
-        user_id=current_user.id,
+    review, _, _ = await apply_review_submission(
+        db=db,
+        user=current_user,
         card_id=body.card_id,
         rating=body.rating,
         response_time_ms=body.response_time_ms,
         client_id=body.client_id,
-    )
-    db.add(review)
-
-    # Update or create memory state
-    ms_result = await db.execute(
-        select(MemoryState).where(
-            MemoryState.user_id == current_user.id,
-            MemoryState.card_id == body.card_id,
-        )
-    )
-    memory_state = ms_result.scalar_one_or_none()
-
-    if not memory_state:
-        memory_state = MemoryState(
-            user_id=current_user.id,
-            card_id=body.card_id,
-        )
-        db.add(memory_state)
-
-    now = datetime.now(timezone.utc)
-    schedule = calculate_schedule(
-        reps=memory_state.reps,
-        lapses=memory_state.lapses,
-        state=memory_state.state,
-        stability=memory_state.stability,
-        difficulty=memory_state.difficulty,
-        last_review_at=memory_state.last_review_at,
-        rating=body.rating,
-        response_time_ms=body.response_time_ms,
-        seed_difficulty=card.difficulty,
-        now=now,
-    )
-    memory_state.stability = schedule.stability
-    memory_state.difficulty = schedule.difficulty
-    memory_state.retrievability = schedule.retrievability
-    memory_state.reps = schedule.reps
-    memory_state.lapses = schedule.lapses
-    memory_state.state = schedule.state
-    memory_state.last_review_at = schedule.last_review_at
-    memory_state.next_review_at = schedule.next_review_at
-    await mark_daily_queue_completed(
-        db=db,
-        user_id=current_user.id,
-        card_id=body.card_id,
-        completed_at=now,
-    )
-
-    await db.flush()
-    await track_review_intelligence_signals(
-        db=db,
-        user_id=current_user.id,
-        card=card,
-        rating=body.rating,
-        response_time_ms=body.response_time_ms,
-        reviewed_at=now,
     )
     return review
 

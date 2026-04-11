@@ -195,6 +195,72 @@ class ReviewSessionSummary(BaseModel):
 # ─── Jobs ─────────────────────────────────────────────────────────────────────
 
 
+class SyncEventEnvelope(BaseModel):
+    client_event_id: str = Field(min_length=3, max_length=100)
+    event_type: str = Field(pattern="^(review|card_edit|settings_update)$")
+    event_payload: dict
+    client_timestamp: datetime
+
+
+class SyncPushRequest(BaseModel):
+    device_id: str = Field(min_length=3, max_length=255)
+    events: list[SyncEventEnvelope] = Field(default_factory=list, max_length=200)
+
+
+class SyncErrorDetail(BaseModel):
+    client_event_id: str
+    detail: str
+
+
+class SyncCardResponse(BaseModel):
+    id: UUID
+    source_id: UUID
+    source_title: str | None = None
+    card_type: str
+    question: str
+    answer: str
+    difficulty: int
+    is_active: bool
+    tags: dict | None = None
+    updated_at: datetime
+
+
+class SyncMemoryStateResponse(BaseModel):
+    card_id: UUID
+    stability: float
+    difficulty: float
+    retrievability: float
+    reps: int
+    lapses: int
+    state: str
+    next_review_at: datetime | None
+    last_review_at: datetime | None
+    updated_at: datetime
+
+
+class SyncPushResponse(BaseModel):
+    processed: int
+    skipped: int
+    errors: list[SyncErrorDetail]
+    processed_event_ids: list[str]
+    skipped_event_ids: list[str]
+    updated_cards: list[SyncCardResponse]
+    updated_memory_states: list[SyncMemoryStateResponse]
+    preferences: dict | None = None
+    server_timestamp: datetime
+
+
+class SyncPullChanges(BaseModel):
+    cards: list[SyncCardResponse]
+    memory_states: list[SyncMemoryStateResponse]
+    preferences: dict | None = None
+
+
+class SyncPullResponse(BaseModel):
+    server_timestamp: datetime
+    changes: SyncPullChanges
+
+
 class JobResponse(BaseModel):
     id: UUID
     job_type: str
